@@ -1,5 +1,12 @@
 <img src="docs/plot/logo.png" alt="logo" width="100"/>
 
+[![Slack](https://img.shields.io/badge/slack-pafka--help-blue?logo=slack)](https://memarkworkspace.slack.com/archives/C01RPEU93MM)
+[![Release](https://img.shields.io/github/v/release/4paradigm/pafka)](https://github.com/4paradigm/pafka/releases)
+[![Stars](https://img.shields.io/github/stars/4paradigm/pafka)](https://github.com/4paradigm/pafka/stargazers)
+[![Fork](https://img.shields.io/github/forks/4paradigm/pafka)](https://github.com/4paradigm/pafka/network/members)
+[![License](https://img.shields.io/github/license/4paradigm/pafka)](https://github.com/4paradigm/pafka/blob/main/LICENSE)
+<!-- [![Docker Pulls]()]() -->
+
 Pafka: PMem-Accelerated Kafka
 ===
 
