@@ -146,8 +146,6 @@ For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4pa
     <img src="docs/plot/latency.png" alt="latency" width="450"/>
 </p>
 
-<img src="docs/plot/perf.png" alt="performance" width="800"/>
-
 <!---
 Storage Type |	producer throughput | consumer throughput|
 |---|---|---|
