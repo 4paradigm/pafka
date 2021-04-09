@@ -139,7 +139,12 @@ For `HDD`, we use batch size of 32k, 320k and 3200k for write, respectively, whi
 For other storage types, we use batch size of 32k, as increasing to larger batch size does not increase the performance much.
 For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4paradigm/llpl) for the performance benchmark.
 
-#### Throughput
+#### Performance
+
+<p float="left">
+    <img src="docs/plot/perf.png" alt="throughput" width="450"/>
+    <img src="docs/plot/latency.png" alt="latency" width="450"/>
+</p>
 
 <img src="docs/plot/perf.png" alt="performance" width="800"/>
 
