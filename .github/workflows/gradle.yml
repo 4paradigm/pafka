@@ -17,9 +17,13 @@ name: Pafka CI with Gradle
 
 on:
   push:
-    branches: [ release/* ]
+    branches:
+      - release/*
+      - main
   pull_request:
-    branches: [ release/* ]
+    branches:
+      - release/*
+      - main
 
 jobs:
   build:
