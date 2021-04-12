@@ -2,10 +2,11 @@
 
 [![Slack](https://img.shields.io/badge/slack-pafka--help-blue?logo=slack)](https://memarkworkspace.slack.com/archives/C01RPEU93MM)
 [![Release](https://img.shields.io/github/v/release/4paradigm/pafka)](https://github.com/4paradigm/pafka/releases)
+[![Docker Pulls](https://img.shields.io/docker/pulls/pafka/pafka-dev)](https://hub.docker.com/repository/docker/pafka/pafka-dev)
 [![Stars](https://img.shields.io/github/stars/4paradigm/pafka)](https://github.com/4paradigm/pafka/stargazers)
 [![Fork](https://img.shields.io/github/forks/4paradigm/pafka)](https://github.com/4paradigm/pafka/network/members)
 [![License](https://img.shields.io/github/license/4paradigm/pafka)](https://github.com/4paradigm/pafka/blob/main/LICENSE)
-<!-- [![Docker Pulls]()]() -->
+
 
 Pafka: PMem-Accelerated Kafka
 ===
@@ -156,8 +157,9 @@ NVMe SSD | 2050658.2 records/sec (2002.61 MB/sec) | 2582104.8498 records/sec (25
 PMem (Pafka) | 7688881.9 records/sec (7508.68 MB/sec) |10264739.3093 records/sec (10024.1593 MB/s)|
 -->
 
-As we can see, the consumer throughput of PMem has almost reached the network bottleneck (100 Gbps ~= 12.5 GB/s).
-Compared with NVMe SSD, Pafka boosts the producer throughput by 275% to 7508.68 MB/sec.
+As we can see, the consumer throughput of Pafka with PMem has almost reached the network bottleneck (100 Gbps ~= 12.5 GB/s).
+Compared with NVMe SSD, Pafka boosts the producer throughput by 275% to 7508.68 MB/sec. In terms of latency, Pafka can achieve 
+an average latency of 0.1 seconds for both producer and consumer.
 
 ### Cost Comparison
 
