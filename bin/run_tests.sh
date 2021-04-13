@@ -21,6 +21,7 @@ declare -A blacklist=(
   ['CustomQuotaCallbackTest']=1
   ['DeleteTopicTest']=1
   ['ReassignPartitionsIntegrationTest']=1
+  ['RebalanceSourceConnectorsIntegrationTest']=1
 )
 
 echo "start time: " `date`
