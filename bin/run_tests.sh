@@ -14,7 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-declare -A blacklist=( ['SslSelectorTest']=1 ['MetricsDuringTopicCreationDeletionTest']=1, ['KafkaAdminClientTest']=1, ['CustomQuotaCallbackTest']=1 ['DeleteTopicTest']=1)
+declare -A blacklist=(
+  ['SslSelectorTest']=1
+  ['MetricsDuringTopicCreationDeletionTest']=1
+  ['KafkaAdminClientTest']=1
+  ['CustomQuotaCallbackTest']=1
+  ['DeleteTopicTest']=1
+  ['ReassignPartitionsIntegrationTest']=1
+)
 
 echo "start time: " `date`
 
