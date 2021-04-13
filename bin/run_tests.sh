@@ -67,7 +67,7 @@ do
       echo "Run tests in $sub:test --tests $class" @ `date`
     fi
     sub=`echo $sub | sed -e "s/\//:/g"`
-    ./gradlew $sub:test --tests $class
+    ./gradlew $sub:test --tests $class --no-daemon --continue -PtestLoggingEvents=started,passed,skipped,failed -PignoreFailures=true -PmaxParallelForks=1 -PmaxTestRetries=1 -PmaxTestRetryFailures=3 -PforkEvery=1
     exit_status=$?
 
     if [[ $exit_status != 0 ]]; then
