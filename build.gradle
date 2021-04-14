@@ -431,6 +431,7 @@ subprojects {
     exclude '**/*KafkaAdminClientTest.class'
     exclude '**/*CustomQuotaCallbackTest.class'
     exclude '**/*DeleteTopicTest.class'
+    exclude '**/*SelectorTest.class'
 
     if (shouldUseJUnit5) {
       useJUnitPlatform {
