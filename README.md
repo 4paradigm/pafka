@@ -13,7 +13,7 @@ Pafka: PMem-Accelerated Kafka
 
 ## Introduction
 
-Pafka is an evolved version of Apache Kafka developed by 4Paradigm.
+Pafka is an evolved version of Apache Kafka developed by [MemArk](https://memark.io/).
 Kafka is an open-source distributed event streaming/message queue system for handling real-time data feeds efficiently and reliably.
 However, its performance (e.g., throughput) is constrained by the disk bandwidth, which further deteriorates due to the file system overhead.
 
