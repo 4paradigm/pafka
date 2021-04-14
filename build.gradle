@@ -392,6 +392,10 @@ subprojects {
     // Gradle will run each test class, so we exclude the suites to avoid redundantly running the tests twice.
     exclude '**/*Suite.class'
 
+
+    exclude '**/*ReassignPartitionsIntegrationTest.class'
+    exclude '**/*RebalanceSourceConnectorsIntegrationTest.class'
+
     if (shouldUseJUnit5) {
       useJUnitPlatform {
         includeTags "integration"
