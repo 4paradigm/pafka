@@ -48,7 +48,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Setup timezone
+      uses: zcong1993/setup-timezone@master
+      with:
+        timezone: Asia/Singapore
     - name: install pmdk
       run: sudo apt-get install libpmem1 librpmem1 libpmemblk1 libpmemlog1 libpmemobj1 libpmempool1
     - name: test
-      run: bash bin/run_tests.sh
+      run: ./gradlew -PscalaVersion=2.13.5 unitTest --no-daemon --continue -PtestLoggingEvents=started,passed,skipped,failed -PignoreFailures=true -PmaxParallelForks=1 -PmaxTestRetries=1 -PmaxTestRetryFailures=3 -PforkEvery=1

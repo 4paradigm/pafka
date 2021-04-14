@@ -430,6 +430,7 @@ subprojects {
     exclude '**/*MetricsDuringTopicCreationDeletionTest.class'
     exclude '**/*KafkaAdminClientTest.class'
     exclude '**/*CustomQuotaCallbackTest.class'
+    exclude '**/*DeleteTopicTest.class'
 
     if (shouldUseJUnit5) {
       useJUnitPlatform {
