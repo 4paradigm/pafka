@@ -21,8 +21,8 @@ Pafka equips Kafka with Intel® Optane™ Persistent Memory (PMem) support, whic
 rather than treat PMem as a normal disk device. 
 With careful design and implementation, Pafka can achieve 7.5 GB/s write throughput and 10 GB/s read throughput in terms of single-server performance.
 
-**Note that this is currently a beta-release. While we are doing further optimization and testing, 
-stable versions will be released soon.**
+**Note that this is currently a beta-release. We are doing further optimization and testing, 
+and stable versions will be released soon.**
 
 ## Pafka vs Kafka
 
@@ -92,7 +92,7 @@ Here is the key information we used for our hardware cost estimation.
 - SATA SSD based Kafka: the hardware cost for a single server is estimated as USD 10,000. 
 - PMem based Pafka: We equip the same server configuration with additional 128 GB x 6 = 768 GB PMem. The hardware cost of such a PMem backed server is estimated as USD 13,500.
 
-The below figure demonstrated that, in order to achieve the overall throughput of 20 GB/sec, the numbers of SATA SSD based servers and PMem based servers are 45 and 3, respectively. Furthermore, for the hardware cost, the traditional Kafka (SATA SSD) takes USD 450K, while our Pafka (PMem) solution takes USD 40.5K only. The Pafka solution significantly reduces the hardware cost  to 9% of the traditional Kafka solution only.
+The below figure demonstrated that, in order to achieve the overall throughput of 20 GB/sec, the numbers of SATA SSD based servers and PMem based servers are 45 and 3, respectively. Furthermore, for the hardware cost, the traditional Kafka (SATA SSD) takes USD 450K, while our Pafka (PMem) solution takes USD 40.5K only. The Pafka solution significantly reduces the hardware cost to 9% of the traditional Kafka solution.
 
 <img src="docs/plot/tco.png" alt="tco" width="800"/>
 
@@ -120,7 +120,7 @@ If you use the docker image, you can skip the following `Compile` step.
 - [pmdk llpl](https://github.com/4paradigm/llpl)
 
 > :warning: **We have done some modifications on the original pmdk source codes. 
-> So please download the source code from the two repositories provided above.**
+> Please download the source code from the two repositories provided above.**
 
 
 **Actually we have already shipped pcj and llpl jars in `libs` folder in the Pafka repository.
@@ -130,7 +130,7 @@ you can download the source codes and compile on your own environment.**
 
 ##### Compile pmdk libraries
 
-After clone the source code:
+After cloning the source code:
 
     # compile pcj
     cd pcj
@@ -165,7 +165,7 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 |log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.|
 |log.channel.type|file|log file channel type. Options: "file", "pmem".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage|
 
-> :warning: **`log.preallocate` has to be set to `true` if use pmem, as PMem MemoryBlock does not support `append`-like operations.**
+> :warning: **`log.preallocate` has to be set to `true` if pmem is used, as PMem MemoryBlock does not support `append`-like operations.**
 
 Sample config in config/server.properties is as follows:
 
@@ -173,7 +173,7 @@ Sample config in config/server.properties is as follows:
     storage.pmem.size=107374182400
     log.pmem.pool.ratio=0.9
     log.channel.type=pmem
-    # log.preallocate have to set to true if use pmem
+    # log.preallocate have to set to true if pmem is used
     log.preallocate=true
 
 #### Start Kafka
@@ -215,8 +215,8 @@ as we do not see much performance gain if we move the indexes to PMem.
 
 Pafka is developed by MemArk (https://memark.io/), which is a technical community focusing on empowering modern memory architecture evolution and its application optimization. MemArk is led by 4Paradigm (https://www.4paradigm.com/) and other sponsors (such as Intel).
 
-- Chatting: For any feedback, suggestions, issues, and anythings about using Pafka, you can join our interactive discussion channel at Slack [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
-- Development dicussion: If you would like to report a bug, please use the GitHub Issues; if you would like to propose a new feature, or would like to start a pull request, please use the GitHub Discussions, and our developers will respond promptly.
+- Chatting: For any feedback, suggestions, issues, and anything about using Pafka, you can join our interactive discussion channel at Slack [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
+- Development discussion: If you would like to report a bug, please use the GitHub Issues; if you would like to propose a new feature, or would like to start a pull request, please use the GitHub Discussions, and our developers will respond promptly.
 - Forum (Chinese): https://discuss.memark.io/
 
 You can also contact the authors directly for any feedback:
