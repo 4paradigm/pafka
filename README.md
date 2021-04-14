@@ -222,8 +222,8 @@ Pafka is developed by MemArk (https://memark.io/), which is a technical communit
 You can also contact the authors directly for any feedback:
 - ZHANG Hao: zhanghao@4paradigm.com
 - LU Mian: lumian@4paradigm.com
-- Yang Jun: yangjun@4paradigm.com
-- Chen Cheng: chencheng@4apradigm.com
+- YANG Jun: yangjun@4paradigm.com
+- CHEN Cheng: chencheng@4apradigm.com
 
 
 
