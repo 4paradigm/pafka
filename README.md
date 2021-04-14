@@ -63,8 +63,8 @@ For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4pa
 #### Performance Results
 
 <p float="left">
-    <img src="docs/plot/perf.png" alt="throughput" width="450"/>
-    <img src="docs/plot/latency.png" alt="latency" width="450"/>
+    <img src="docs/plot/perf.png" alt="throughput" width="400"/>
+    <img src="docs/plot/latency.png" alt="latency" width="400"/>
 </p>
 
 <!---
