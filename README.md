@@ -1,6 +1,6 @@
 <img src="docs/plot/logo.png" alt="logo" width="100"/>
 
-[![Slack](https://img.shields.io/badge/slack-pafka--help-blue?logo=slack)](https://memarkworkspace.slack.com/archives/C01RPEU93MM)
+[![Slack](https://img.shields.io/badge/slack-pafka--help-blue?logo=slack)](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
 [![Release](https://img.shields.io/github/v/release/4paradigm/pafka)](https://github.com/4paradigm/pafka/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/pafka/pafka-dev)](https://hub.docker.com/repository/docker/pafka/pafka-dev)
 [![Stars](https://img.shields.io/github/stars/4paradigm/pafka)](https://github.com/4paradigm/pafka/stargazers)
@@ -24,14 +24,93 @@ With careful design and implementation, Pafka can achieve 7.5 GB/s write through
 **Note that this is currently a beta-release. While we are doing further optimization and testing, 
 stable versions will be released soon.**
 
-## Community
+## Pafka vs Kafka
 
-- Chatting: For any feedback, suggestions, issues, and anythings about using Pafka, you can join our interactive discussion channel at Slack [#pafka-help](https://memarkworkspace.slack.com/archives/C01RPEU93MM)
-- Development dicussion: If you would like to report a bug, please use the GitHub Issues; if you would like to propose a new feature, or would like to start a pull request, please use the GitHub Discussions, and our developers will respond promptly.
+### Performance
+
+We conducted some preliminary experiments on our in-house servers.
+One server is used as the Kafka broker server,
+and another two servers as the clients.
+Each of the client servers run 16 clients to saturate the server throughput.
+We're using the `ProducerPerformance` and `ConsumerPerformance` shipped by Kafka
+and the record size of 1024 for the benchmark.
+
+#### Server Specification
+
+The server spec is as follows:
+
+|Item|Spec|
+|---|----|
+|CPU|Intel(R) Xeon(R) Gold 6252 Processor (24 cores/48 threads) * 2|
+|Memory|376 GB|
+|Network|Mellanox ConnectX-5 100 GBps|
+|PMem|128 GB x 6 = 768 GB|
+
+The storage spec and performance:
+
+|Storage Type|Write (MB/s)|Read (MB/s)|
+|---|---|---|
+|HDD|32k: 5.7 <br/> 320k: 37.5 <br/> 3200k: 78.3 <br/>|86.5|
+|HDD RAID|530|313|
+|Sata SSD|458|300|
+|NVMe SSD|2,421|2,547|
+|PMem|9,500|37,120|
+
+For `HDD`, we use batch size of 32k, 320k and 3200k for write, respectively, while read does not change much as we increase the batch size.
+For other storage types, we use batch size of 32k, as increasing to larger batch size does not increase the performance much.
+For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4paradigm/llpl) for the performance benchmark.
+
+#### Performance Results
+
+<p float="left">
+    <img src="docs/plot/perf.png" alt="throughput" width="450"/>
+    <img src="docs/plot/latency.png" alt="latency" width="450"/>
+</p>
+
+<!---
+Storage Type |	producer throughput | consumer throughput|
+|---|---|---|
+|HDD|74394.0 records/sec (72.64 MB/sec)|63143.9413 records/sec (61.6640 MB/s)|
+HDD	RAID | 444336.5 records/sec (433.92 MB/sec) | 293637.6567 records/sec (286.7553 MB/s)|
+Sata SSD |492760.7 records/sec (481.22 MB/sec) | 456223.8026 records/sec (445.5311 MB/s) |
+NVMe SSD | 2050658.2 records/sec (2002.61 MB/sec) | 2582104.8498 records/sec (2521.5865 MB/s) |
+PMem (Pafka) | 7688881.9 records/sec (7508.68 MB/sec) |10264739.3093 records/sec (10024.1593 MB/s)|
+-->
+
+As we can see, the consumer throughput of Pafka with PMem has almost reached the network bottleneck (100 Gbps ~= 12.5 GB/s).
+Compared with NVMe SSD, Pafka boosts the producer throughput by 275% to 7508.68 MB/sec. In terms of latency, Pafka can achieve 
+an average latency of 0.1 seconds for both producer and consumer.
+
+### TCO (Total Cost of Ownership)
+
+One of the most significant advantages of persistent memory is to save TCO. Compared with the original HDD/SDD based Kafka, the PMEM-enhanced Pafka reduces the cost by providing higher throughput on a single server. In this section, we only compare the hardware cost as the TCO.
+
+Suppose our target is to provide the overall throughput of 20 GB/sec (the bottleneck can be either producer or consumer depending on the storage type). We compare the PMem based Pafka with SATA SSD based Kafka. Kafka based on SATA SSD should be a common configuration in modern data centers. Please refer to the above Server Specification under the section of Performance Results.
+
+Here is the key information we used for our hardware cost estimation.  
+
+- SATA SSD based Kafka: the hardware cost for a single server is estimated as USD 10,000. 
+- PMem based Pafka: We equip the same server configuration with additional 128 GB x 6 = 768 GB PMem. The hardware cost of such a PMem backed server is estimated as USD 13,500.
+
+The below figure demonstrated that, in order to achieve the overall throughput of 20 GB/sec, the numbers of SATA SSD based servers and PMem based servers are 45 and 3, respectively. Furthermore, for the hardware cost, the traditional Kafka (SATA SSD) takes USD 450K, while our Pafka (PMem) solution takes USD 40.5K only. The Pafka solution significantly reduces the hardware cost  to 9% of the traditional Kafka solution only.
+
+<img src="docs/plot/tco.png" alt="tco" width="800"/>
+
 
 ## Get Started
 
 For complete documentation of Kafka, refer to [here](README.kafka.md).
+
+### Docker Image
+The easiest way to try Pafka is to use the docker image: https://hub.docker.com/repository/docker/pafka/pafka-dev
+
+```
+docker run -it -v $YOUR_PMEM_PATH:/mnt/mem pafka:pafka-dev bash
+```
+
+$YOUR_PMEM_PATH is the mount point of PMme (DAX file system) in the host system.
+
+If you use the docker image, you can skip the following `Compile` steps.
 
 ### Compile
 
@@ -64,9 +143,6 @@ After clone the source code:
     cp target/llpl.jar $PAFKA_HOME/libs
 
  
-
-
-
 #### Build Pafka jar
 
     ./gradlew jar
@@ -106,75 +182,6 @@ Follow instructions in https://kafka.apache.org/quickstart. Basically:
     bin/zookeeper-server-start.sh config/zookeeper.properties
     bin/kafka-server-start.sh config/server.properties
 
-### Performance Results
-
-We conducted some preliminary experiments on our in-house servers.
-One server is used as the Kafka broker server,
-and another two servers as the clients.
-Each of the client servers run 16 clients to saturate the server throughput.
-We're using the `ProducerPerformance` and `ConsumerPerformance` shipped by Kafka
-and the record size of 1024 for the benchmark.
-
-#### Server Specification
-
-The server spec is as follows:
-
-|Item|Spec|
-|---|----|
-|CPU|Intel(R) Xeon(R) Gold 6252 Processor (24 cores/48 threads) * 2|
-|Memory|376 GB|
-|Network|Mellanox ConnectX-5 100 GBps|
-|PMem|128 GB x 6 = 768 GB|
-
-The storage spec and performance:
-
-|Storage Type|Write (MB/s)|Read (MB/s)|
-|---|---|---|
-|HDD|32k: 5.7 <br/> 320k: 37.5 <br/> 3200k: 78.3 <br/>|86.5|
-|HDD RAID|530|313|
-|Sata SSD|458|300|
-|NVMe SSD|2,421|2,547|
-|PMem|9,500|37,120|
-
-For `HDD`, we use batch size of 32k, 320k and 3200k for write, respectively, while read does not change much as we increase the batch size.
-For other storage types, we use batch size of 32k, as increasing to larger batch size does not increase the performance much.
-For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4paradigm/llpl) for the performance benchmark.
-
-#### Performance
-
-<p float="left">
-    <img src="docs/plot/perf.png" alt="throughput" width="450"/>
-    <img src="docs/plot/latency.png" alt="latency" width="450"/>
-</p>
-
-<!---
-Storage Type |	producer throughput | consumer throughput|
-|---|---|---|
-|HDD|74394.0 records/sec (72.64 MB/sec)|63143.9413 records/sec (61.6640 MB/s)|
-HDD	RAID | 444336.5 records/sec (433.92 MB/sec) | 293637.6567 records/sec (286.7553 MB/s)|
-Sata SSD |492760.7 records/sec (481.22 MB/sec) | 456223.8026 records/sec (445.5311 MB/s) |
-NVMe SSD | 2050658.2 records/sec (2002.61 MB/sec) | 2582104.8498 records/sec (2521.5865 MB/s) |
-PMem (Pafka) | 7688881.9 records/sec (7508.68 MB/sec) |10264739.3093 records/sec (10024.1593 MB/s)|
--->
-
-As we can see, the consumer throughput of Pafka with PMem has almost reached the network bottleneck (100 Gbps ~= 12.5 GB/s).
-Compared with NVMe SSD, Pafka boosts the producer throughput by 275% to 7508.68 MB/sec. In terms of latency, Pafka can achieve 
-an average latency of 0.1 seconds for both producer and consumer.
-
-### Cost Comparison
-
-One of the most significant advantages of persistent memory is to save TCO (Total Cost of Ownership). Compared with the original HDD/SDD based Kafka, the PMEM-enhanced Pafka reduces the cost by providing higher throughput on a single server. In this section, we only compare the hardware cost as the TCO.
-
-Suppose our target is to provide the overall throughput of 20 GB/sec (the bottleneck can be either producer or consumer depending on the storage type). We compare the PMem based Pafka with SATA SSD based Kafka. Kafka based on SATA SSD should be a common configuration in modern data centers. Please refer to the above Server Specification under the section of Performance Results.
-
-Here is the key information we used for our hardware cost estimation.  
-
-- SATA SSD based Kafka: the hardware cost for a single server is estimated as USD 10,000. 
-- PMem based Pafka: We equip the same server configuration with additional 128 GB x 6 = 768 GB PMem. The hardware cost of such a PMem backed server is estimated as USD 13,500.
-
-The below figure demonstrated that, in order to achieve the overall throughput of 20 GB/sec, the numbers of SATA SSD based servers and PMem based servers are 45 and 3, respectively. Furthermore, for the hardware cost, the traditional Kafka (SATA SSD) takes USD 450K, while our Pafka (PMem) solution takes USD 40.5K only. The Pafka solution significantly reduces the hardware cost  to 9% of the traditional Kafka solution only.
-
-<img src="docs/plot/tco.png" alt="tco" width="800"/>
 
 ## Limitations
 
@@ -195,13 +202,28 @@ We've tested on Java 8, Java 11 and Java 15.
 as we do not see much performance gain if we move the indexes to PMem.
 
 
+## Roadmap
 
-## Development Team
+| Version |	Status | Features |
+|---|---|---|
+|v0.1.0|Released|- Use PMem for data storage <br /> - Significant performance boost compared with Kafka |
+|v0.2.0|To be released in June/July 2021|- Layered storage with PMem and other storage medium|
 
-Pafka is an open-source project developed by the HPC team of 4Paradigm. For any technical feedback, please contact the authors:
+
+## Help
+
+### Community
+
+- Chatting: For any feedback, suggestions, issues, and anythings about using Pafka, you can join our interactive discussion channel at Slack [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
+- Development dicussion: If you would like to report a bug, please use the GitHub Issues; if you would like to propose a new feature, or would like to start a pull request, please use the GitHub Discussions, and our developers will respond promptly.
+
+### Development Team
+
+Pafka is an open-source project developed by the HPC team of 4Paradigm. For any technical feedback, you can also contact the authors directly:
 - ZHANG Hao: zhanghao@4paradigm.com
 - LU Mian: lumian@4paradigm.com
 - Yang Jun: yangjun@4paradigm.com
+- Chen Cheng: chencheng@4apradigm.com
 
 
 
