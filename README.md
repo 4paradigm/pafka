@@ -170,11 +170,11 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 Sample config in config/server.properties is as follows:
 
     storage.pmem.path=/mnt/pmem/kafka/
-    storage.pmem.size=107374182400  # 100 GB
+    storage.pmem.size=107374182400
     log.pmem.pool.ratio=0.9
     log.channel.type=pmem
-    
-    log.preallocate=true  # have to set to true if use pmem
+    # log.preallocate have to set to true if use pmem
+    log.preallocate=true
 
 #### Start Kafka
 Follow instructions in https://kafka.apache.org/quickstart. Basically:
