@@ -105,7 +105,7 @@ For complete documentation of Kafka, refer to [here](README.kafka.md).
 The easiest way to try Pafka is to use the docker image: https://hub.docker.com/repository/docker/pafka/pafka-dev
 
 ```
-docker run -it -v $YOUR_PMEM_PATH:/mnt/mem pafka:pafka-dev bash
+docker run -it -v $YOUR_PMEM_PATH:/mnt/mem pafka/pafka-dev bash
 ```
 
 where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host system.
