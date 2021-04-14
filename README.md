@@ -108,9 +108,9 @@ The easiest way to try Pafka is to use the docker image: https://hub.docker.com/
 docker run -it -v $YOUR_PMEM_PATH:/mnt/mem pafka:pafka-dev bash
 ```
 
-$YOUR_PMEM_PATH is the mount point of PMme (DAX file system) in the host system.
+where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host system.
 
-If you use the docker image, you can skip the following `Compile` steps.
+If you use the docker image, you can skip the following `Compile` step.
 
 ### Compile
 
