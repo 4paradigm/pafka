@@ -210,16 +210,16 @@ as we do not see much performance gain if we move the indexes to PMem.
 |v0.2.0|To be released in June/July 2021|- Layered storage with PMem and other storage medium|
 
 
-## Help
 
-### Community
+## Community
+
+Pafka is developed by MemArk (https://memark.io/), which is a technical community focusing on empowering modern memory architecture evolution and its application optimization. MemArk is founded by 4Paradigm (https://www.4paradigm.com/) and other sponsors (such as Intel).
 
 - Chatting: For any feedback, suggestions, issues, and anythings about using Pafka, you can join our interactive discussion channel at Slack [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
 - Development dicussion: If you would like to report a bug, please use the GitHub Issues; if you would like to propose a new feature, or would like to start a pull request, please use the GitHub Discussions, and our developers will respond promptly.
+- Forum (Chinese): https://discuss.memark.io/
 
-### Development Team
-
-Pafka is an open-source project developed by the HPC team of 4Paradigm. For any technical feedback, you can also contact the authors directly:
+You can also contact the authors directly for any feedback:
 - ZHANG Hao: zhanghao@4paradigm.com
 - LU Mian: lumian@4paradigm.com
 - Yang Jun: yangjun@4paradigm.com
