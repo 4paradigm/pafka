@@ -432,6 +432,7 @@ subprojects {
     exclude '**/*CustomQuotaCallbackTest.class'
     exclude '**/*DeleteTopicTest.class'
     exclude '**/*SelectorTest.class'
+    exclude '**/*SocketServerTest.class'
 
     if (shouldUseJUnit5) {
       useJUnitPlatform {
