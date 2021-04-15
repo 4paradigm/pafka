@@ -392,7 +392,7 @@ subprojects {
     // Gradle will run each test class, so we exclude the suites to avoid redundantly running the tests twice.
     exclude '**/*Suite.class'
 
-
+    // exclude these tests as it may hange or fail sometimes
     exclude '**/*ReassignPartitionsIntegrationTest.class'
     exclude '**/*RebalanceSourceConnectorsIntegrationTest.class'
 
@@ -430,6 +430,7 @@ subprojects {
     // Gradle will run each test class, so we exclude the suites to avoid redundantly running the tests twice.
     exclude '**/*Suite.class'
 
+    // exclude these tests as it may hange or fail sometimes
     exclude '**/*SslSelectorTest.class'
     exclude '**/*MetricsDuringTopicCreationDeletionTest.class'
     exclude '**/*KafkaAdminClientTest.class'
