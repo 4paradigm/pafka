@@ -21,8 +21,6 @@ Pafka equips Kafka with Intel® Optane™ Persistent Memory (PMem) support, whic
 rather than treat PMem as a normal disk device. 
 With careful design and implementation, Pafka can achieve 7.5 GB/s write throughput and 10 GB/s read throughput in terms of single-server performance.
 
-**Note that this is currently a beta-release. We are doing further optimization and testing, 
-and stable versions will be released soon.**
 
 ## Pafka vs Kafka
 
