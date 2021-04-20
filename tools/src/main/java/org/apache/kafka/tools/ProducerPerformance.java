@@ -359,12 +359,14 @@ public class ProducerPerformance {
             long elapsed = System.currentTimeMillis() - windowStart;
             double recsPerSec = 1000.0 * windowCount / (double) elapsed;
             double mbPerSec = 1000.0 * this.windowBytes / (double) elapsed / (1024.0 * 1024.0);
-            System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency, %.1f ms max latency.%n",
+            System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency (window), %.1f ms max latency (window), %.1f ms avg latency, %.1f ms max latency.%n",
                               windowCount,
                               recsPerSec,
                               mbPerSec,
                               windowTotalLatency / (double) windowCount,
-                              (double) windowMaxLatency);
+                              (double) windowMaxLatency,
+                              totalLatency / (double) count,
+                              (double) maxLatency);
         }
 
         public void newWindow() {

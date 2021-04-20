@@ -90,7 +90,7 @@ object ConsumerPerformance extends LazyLogging {
     if (!showDetailedStats)
       println("start.time, end.time, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec" + newFieldsInHeader)
     else
-      println("time, threadId, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec" + newFieldsInHeader)
+      println("time, threadId, data.consumed.in.MB, MB.sec, data.consumed.in.nMsg, nMsg.sec" + newFieldsInHeader + ", windowMaxLatency, windowAvgLatency, maxLatency, avgLatency")
   }
 
   def consume(consumer: KafkaConsumer[Array[Byte], Array[Byte]],
@@ -109,6 +109,11 @@ object ConsumerPerformance extends LazyLogging {
     var joinStart = System.currentTimeMillis
     var joinTimeMsInSingleRound = 0L
 
+    var maxLatency: Double = 0
+    var totalLatency: Double = 0
+    var windowMaxLatency: Double = 0
+    var windowTotalLatency: Double = 0
+
     consumer.subscribe(topics.asJava, new ConsumerRebalanceListener {
       def onPartitionsAssigned(partitions: util.Collection[TopicPartition]): Unit = {
         joinTime.addAndGet(System.currentTimeMillis - joinStart)
@@ -126,8 +131,16 @@ object ConsumerPerformance extends LazyLogging {
     while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
       val records = consumer.poll(Duration.ofMillis(100)).asScala
       currentTimeMillis = System.currentTimeMillis
-      if (records.nonEmpty)
+
+      if (records.nonEmpty) {
+        val latency: Long = currentTimeMillis - lastConsumedTime
+        windowMaxLatency = Math.max(windowMaxLatency, latency.toDouble)
+        windowTotalLatency += latency.toDouble * records.size
+        maxLatency = Math.max(maxLatency, latency.toDouble)
+        totalLatency += latency.toDouble * records.size
+
         lastConsumedTime = currentTimeMillis
+      }
       for (record <- records) {
         messagesRead += 1
         if (record.key != null)
@@ -138,11 +151,14 @@ object ConsumerPerformance extends LazyLogging {
         if (currentTimeMillis - lastReportTime >= config.reportingInterval) {
           if (config.showDetailedStats)
             printConsumerProgress(0, bytesRead, lastBytesRead, messagesRead, lastMessagesRead,
-              lastReportTime, currentTimeMillis, config.dateFormat, joinTimeMsInSingleRound)
+              lastReportTime, currentTimeMillis, config.dateFormat, joinTimeMsInSingleRound, windowMaxLatency, windowTotalLatency, maxLatency, totalLatency)
           joinTimeMsInSingleRound = 0L
           lastReportTime = currentTimeMillis
           lastMessagesRead = messagesRead
           lastBytesRead = bytesRead
+
+          windowMaxLatency = 0
+          windowTotalLatency = 0
         }
       }
     }
@@ -162,9 +178,14 @@ object ConsumerPerformance extends LazyLogging {
                                startMs: Long,
                                endMs: Long,
                                dateFormat: SimpleDateFormat,
-                               periodicJoinTimeInMs: Long): Unit = {
+                               periodicJoinTimeInMs: Long,
+                               windowMaxLatency: Double,
+                               windowTotalLatency: Double,
+                               maxLatency: Double,
+                               totalLatency: Double): Unit = {
     printBasicProgress(id, bytesRead, lastBytesRead, messagesRead, lastMessagesRead, startMs, endMs, dateFormat)
     printExtendedProgress(bytesRead, lastBytesRead, messagesRead, lastMessagesRead, startMs, endMs, periodicJoinTimeInMs)
+    print(", %.4f, %.4f, %.4f, %.4f".format(windowMaxLatency.toDouble, windowTotalLatency / (messagesRead - lastMessagesRead).toDouble, maxLatency.toDouble, totalLatency / messagesRead.toDouble))
     println()
   }
 
