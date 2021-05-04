@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/github/license/4paradigm/pafka)](https://github.com/4paradigm/pafka/blob/main/LICENSE)
 
 
-Pafka: PMem-Accelerated Kafka
+Pafka: Persistent Memory (PMem) Accelerated Kafka
 ===
 
 ## Introduction
