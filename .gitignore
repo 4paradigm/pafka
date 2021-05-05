@@ -31,8 +31,6 @@ Vagrantfile.local
 /logs
 .DS_Store
 
-config/server-*
-config/zookeeper-*
 core/data/*
 gradle/wrapper/*.jar
 gradlew.bat
@@ -60,3 +58,7 @@ raft/src/generated
 raft/.jqwik-database
 core/src/generated
 metadata/src/generated
+
+*.pyc
+*.log
+__pycache__
