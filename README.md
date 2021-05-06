@@ -1,4 +1,4 @@
-<img src="docs/plot/logo.png" alt="logo" width="100"/>
+<img src="docs/plot/logo.png" alt="logo" width="250"/>
 
 [![Slack](https://img.shields.io/badge/slack-pafka--help-blue?logo=slack)](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
 [![Release](https://img.shields.io/github/v/release/4paradigm/pafka)](https://github.com/4paradigm/pafka/releases)
