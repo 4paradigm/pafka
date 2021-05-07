@@ -52,4 +52,5 @@ WORKDIR /opt/pafka-dev
 # build the pafka
 RUN ./gradlew jar
 
-CMD ["bin/zookeeper-server-start.sh config/zookeeper.properties &; bin/kafka-server-start.sh config/server.properties &"]
+ENTRYPOINT ["docker/entrypoint.sh"]
+CMD ["bash"]

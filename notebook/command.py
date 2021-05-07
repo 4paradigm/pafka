@@ -123,21 +123,27 @@ def stop_pafka(delete_data=False):
     stop_service("pafka", delete_data)
 
 
-def bench_write(topic="test", max_throughput=1000000, num_records=10000000, record_size=1024):
+def bench_producer(topic="test", max_throughput=1000000, num_records=10000000, record_size=1024):
     producer_config = "{}/config/producer.properties".format(kafka_home)
     cmd = "{}/bin/kafka-producer-perf-test.sh --topic {} --throughput {} --num-records {} --record-size {} --producer.config {} 2>&1".format(kafka_home, topic, max_throughput, num_records, record_size, producer_config)
     for line in execute_cmd_realtime(cmd):
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
             print(line)
 
-    print("benchmark write done")
+    print("Benchmark producer done")
 
 
-def bench_read(topic="test", num_records=10000000, report_interval=1000, port=9092, timeout=100000):
+def bench_consumer(topic="test", num_records=10000000, report_interval=1000, port=9092, timeout=100000, exclude_init=True):
     consumer_config = "{}/config/consumer.properties".format(kafka_home)
+
+    if exclude_init:
+        # call consume 1 record first to avoid the initialization cost
+        cmd_init = "{}/bin/kafka-consumer-perf-test.sh --topic {} --consumer.config {} --bootstrap-server localhost:{} --messages {} --show-detailed-stats --reporting-interval {} --timeout {} 2>&1".format(kafka_home, topic, consumer_config, port, 1, report_interval, timeout)
+        execute_cmd(cmd_init)
+
     cmd = "{}/bin/kafka-consumer-perf-test.sh --topic {} --consumer.config {} --bootstrap-server localhost:{} --messages {} --show-detailed-stats --reporting-interval {} --timeout {} 2>&1".format(kafka_home, topic, consumer_config, port, num_records, report_interval, timeout)
     for line in execute_cmd_realtime(cmd):
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
             print(line)
 
-    print("benchmark read done")
+    print("Benchmark consumer done")

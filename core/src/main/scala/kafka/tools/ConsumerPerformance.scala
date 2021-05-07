@@ -127,6 +127,7 @@ object ConsumerPerformance extends LazyLogging {
     var currentTimeMillis = System.currentTimeMillis
     var lastReportTime: Long = currentTimeMillis
     var lastConsumedTime = currentTimeMillis
+    val startTime = currentTimeMillis
 
     while (messagesRead < count && currentTimeMillis - lastConsumedTime <= timeout) {
       val records = consumer.poll(Duration.ofMillis(100)).asScala
@@ -163,11 +164,25 @@ object ConsumerPerformance extends LazyLogging {
       }
     }
 
+    printResult(bytesRead, messagesRead, startTime, currentTimeMillis, maxLatency, totalLatency);
+
     if (messagesRead < count)
       println(s"WARNING: Exiting before consuming the expected number of messages: timeout ($timeout ms) exceeded. " +
         "You can use the --timeout option to increase the timeout.")
     totalMessagesRead.set(messagesRead)
     totalBytesRead.set(bytesRead)
+  }
+
+  def printResult(bytesRead: Long,
+    messagesRead: Long,
+    startMs: Long,
+    endMs: Long,
+    maxLatency: Double,
+    totalLatency: Double): Unit = {
+    val elapsedMs: Double = (endMs - startMs).toDouble
+    val mbPerSec = 1000.0 * bytesRead / elapsedMs / (1024.0 * 1024.0)
+    val messagesPerSec = (messagesRead  / elapsedMs) * 1000.0
+    println("%d records received, %.2f records/sec (%.2f MB/sec), %.2f ms avg latency, %.2f ms max latency".format(messagesRead, messagesPerSec, mbPerSec, totalLatency / messagesRead.toDouble, maxLatency.toDouble))
   }
 
   def printConsumerProgress(id: Int,
