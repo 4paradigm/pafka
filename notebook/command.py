@@ -15,13 +15,14 @@
 
 import subprocess
 import os
+from tabulate import tabulate
 
 os.environ["COLUMNS"] = "10000"
 
 kafka_home = "../"
 
 data = {
-    "pafka": ["/mnt/mem/kafka", "/mnt/mem/zookeeper"],
+    "pafka": ["/pmem/kafka", "/pmem/zookeeper"],
     "kafka": ["/mnt/hdd/kafka", "/mnt/hdd/zookeeper"]
 }
 
@@ -30,6 +31,18 @@ config = {
     "kafka": ["{}/config/server-hdd.properties".format(kafka_home), "{}/config/zookeeper-hdd.properties".format(kafka_home)]
 }
 
+res = {
+    "kafka": {
+        "producer": [0, 0],
+        "consumer": [0, 0]
+    },
+    "pafka": {
+        "producer": [0, 0],
+        "consumer": [0, 0]
+    }
+}
+
+running_instance = ''
 
 def execute_cmd_realtime(cmd, shell=True):
     child = subprocess.Popen(
@@ -99,6 +112,9 @@ def stop_service(name="pafka", delete_data=False):
         execute_cmd("rm -rf {}".format(data[name][1]))
         print("data deleted")
 
+    global running_instance
+    running_instance = ""
+
 
 def start_service(name="pafka", log_lines=10):
     out, _ = execute_cmd("jps | grep 'Kafka'")
@@ -120,6 +136,9 @@ def start_service(name="pafka", log_lines=10):
     out, _ = execute_cmd("tail -{} {}.log".format(log_lines, name))
     print(out)
     print("{} started".format(name))
+
+    global running_instance
+    running_instance = name
 
 
 def start_kafka():
@@ -145,6 +164,12 @@ def bench_producer(topic="test", max_throughput=1000000, num_records=10000000, r
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
             print(line)
 
+    # record the result
+    if '{} records sent'.format(num_records) in line:
+        toks = line.split(',')
+        global res
+        res[running_instance]['producer'][0] = toks[1]
+        res[running_instance]['producer'][1] = ' '.join(toks[2].strip().split(' ')[0:2])
     print("Benchmark producer done")
 
 
@@ -161,4 +186,20 @@ def bench_consumer(topic="test", num_records=10000000, report_interval=1000, por
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
             print(line)
 
+    # record the result
+    if 'records received' in line:
+        toks = line.split(',')
+        global res
+        res[running_instance]['consumer'][0] = toks[1]
+        res[running_instance]['consumer'][1] = ' '.join(toks[2].strip().split(' ')[0:2])
+
     print("Benchmark consumer done")
+
+
+def print_result():
+    headers = ["Producer Throughput", "Producer Avg Latency", "Consumer Throughput", "Consumer Avg Latency"]
+    items = []
+    for item, tl in res.items():
+        items.append([item, tl['producer'][0], tl['producer'][1], tl['consumer'][0], tl['consumer'][1]])
+
+    print(tabulate(items, headers=headers))

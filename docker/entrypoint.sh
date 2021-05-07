@@ -14,23 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# get the latest kafka code
-# but skip the compling as it takes quite long
-
-git log -1 > DOCKER_COMMIT
-git fetch origin
-git pull origin $(git rev-parse --abbrev-ref HEAD)
-git log -1 > LATEST_COMMIT
-
 if [[ $# -ge 1 ]]; then
   arg=$1
 
-  if [[ $arg = "run" ]]; then
-    cmd="bin/zookeeper-server-start.sh config/zookeeper.properties > zk.log 2>&1 &; bin/kafka-server-start.sh config/server.properties > pafka.log 2>&1 &"
+  if [[ $arg = "start" ]]; then
+    echo "Starting zookeeper and pafka services"
+    bin/zookeeper-server-start.sh config/zookeeper.properties > zk.log 2>&1 &
+    bin/kafka-server-start.sh config/server.properties > pafka.log 2>&1 &
+    tail -f pafka.log
+  elif [[ $arg = "notebook" ]]; then
+    echo "Starting jupyter notebook"
+    jupyter lab --allow-root --ip="0.0.0.0" --no-browser
   else
-    cmd=$@
+    echo "Running $@"
+    $@
   fi
 fi
-
-echo "Running $cmd"
-$cmd
