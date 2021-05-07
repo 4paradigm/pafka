@@ -13,10 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-# ARG jdk_version=openjdk:15
-# FROM $jdk_version
-
 FROM ubuntu:20.04
 
 LABEL maintainer="zhanghao@4paradigm.com"
