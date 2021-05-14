@@ -78,6 +78,11 @@ def execute_cmd(cmd, shell=True):
     return out, err
 
 
+def update_src():
+    execute_cmd("git pull origin $(git rev-parse --abbrev-ref HEAD)")
+
+update_src()
+
 def contain_text(text, log_file):
     contained, _ = execute_cmd("cat {} | grep '{}'".format(log_file, text))
     if contained:
