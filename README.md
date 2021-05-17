@@ -100,10 +100,10 @@ The below figure demonstrated that, in order to achieve the overall throughput o
 For complete documentation of Kafka, refer to [here](README.kafka.md).
 
 ### Docker Image
-The easiest way to try Pafka is to use the docker image: https://hub.docker.com/repository/docker/pafka/pafka-dev
+The easiest way to try Pafka is to use the docker image: https://hub.docker.com/r/4pdopensource/pafka-dev
 
 ```
-docker run -it -v $YOUR_PMEM_PATH:/mnt/mem pafka/pafka-dev bash
+docker run -it -v $YOUR_PMEM_PATH:/mnt/mem 4pdopensource/pafka-dev bash
 ```
 
 where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host system.
