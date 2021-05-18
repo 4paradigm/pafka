@@ -62,12 +62,15 @@ def execute_cmd_realtime(cmd, shell=True):
             yield out.decode('utf-8')
 
 
-def execute_cmd(cmd, shell=True):
+def execute_cmd(cmd, shell=True, sync=True):
     child = subprocess.Popen(
         cmd, stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=shell)
+
+    if sync == False:
+        return
 
     out, err = child.communicate()
     if out is not None:
@@ -81,7 +84,10 @@ def execute_cmd(cmd, shell=True):
 def update_src():
     execute_cmd("git pull origin $(git rev-parse --abbrev-ref HEAD)")
 
-update_src()
+
+def clone_src(url="https://github.com/4paradigm/pafka.git", dest="/tmp/pafka-src", sync=False):
+    execute_cmd("git clone {} {}".format(url, dest), sync=sync)
+
 
 def contain_text(text, log_file):
     contained, _ = execute_cmd("cat {} | grep '{}'".format(log_file, text))
@@ -132,7 +138,11 @@ def start_service(name="pafka", log_lines=10):
     execute_cmd("sleep 2")
     out, _ = execute_cmd("tail -{} zk-{}.log".format(log_lines, name))
     print(out)
-    print("starting {} ...".format(name))
+    if name == "kafka":
+        print("starting {} ...".format(name))
+    else:
+        print("starting {} ... (please wait. It may takes a few minutes)".format(name))
+
     execute_cmd("{}/bin/kafka-server-start.sh {} > {}.log 2>&1 &".format(kafka_home, config[name][0], name))
 
     log_file = "{}.log".format(name)
@@ -163,14 +173,24 @@ def stop_pafka(delete_data=False):
 
 
 def bench_producer(topic="test", max_throughput=1000000, num_records=10000000, record_size=1024):
+    print("starting bench_producer...")
     producer_config = "{}/config/producer.properties".format(kafka_home)
     cmd = "{}/bin/kafka-producer-perf-test.sh --topic {} --throughput {} --num-records {} --record-size {} --producer.config {} 2>&1".format(kafka_home, topic, max_throughput, num_records, record_size, producer_config)
+    cur_records = 0
     for line in execute_cmd_realtime(cmd):
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
-            print(line)
+            prefix = ''
+            if 'records sent' in line:
+                win_records = line.split(' ')[0]
+                cur_records = cur_records + int(win_records)
+                cur_records = min(cur_records, num_records)
+                percentage = (cur_records * 100.0) / num_records
+                prefix = "[%d/%d %.0f" % (cur_records, num_records, percentage) + "%] "
+
+            print(prefix + line)
 
     # record the result
-    if '{} records sent'.format(num_records) in line:
+    if 'records sent'.format(num_records) in line:
         toks = line.split(',')
         global res
         res[running_instance]['producer'][0] = toks[1]
@@ -179,6 +199,7 @@ def bench_producer(topic="test", max_throughput=1000000, num_records=10000000, r
 
 
 def bench_consumer(topic="test", num_records=10000000, report_interval=1000, port=9092, timeout=100000, exclude_init=True):
+    print("starting bench_consumer...")
     consumer_config = "{}/config/consumer.properties".format(kafka_home)
 
     if exclude_init:
@@ -189,7 +210,14 @@ def bench_consumer(topic="test", num_records=10000000, report_interval=1000, por
     cmd = "{}/bin/kafka-consumer-perf-test.sh --topic {} --consumer.config {} --bootstrap-server localhost:{} --messages {} --show-detailed-stats --reporting-interval {} --timeout {} 2>&1".format(kafka_home, topic, consumer_config, port, num_records, report_interval, timeout)
     for line in execute_cmd_realtime(cmd):
         if ("SLF4J" not in line) and ("LEADER_NOT_AVAILABLE" not in line):
-            print(line)
+            prefix = ''
+            toks = line.split(',')
+            if ('time' not in line) and ("records received" not in line) and len(toks) == 14:
+                cur_records = int(toks[4])
+                percentage = (cur_records * 100.0) / num_records
+                prefix = "[%d/%d %.0f" % (cur_records, num_records, percentage) + "%] "
+
+            print(prefix + line)
 
     # record the result
     if 'records received' in line:

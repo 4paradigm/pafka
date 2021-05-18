@@ -20,6 +20,7 @@ VOLUME ["/mnt/mem", "/mnt/hdd", "/pmem"]
 
 # Set the timezone.
 ENV TZ="/usr/share/zoneinfo/Asia/Singapore"
+ENV PYTHONPATH="/opt/pafka-dev/notebook/.cmd"
 
 # Set the docker.creator label so that we know that this is a docker image.  This will make it
 # visible to 'docker purge'.  The docker.creator label also lets us know what UNIX user built this
