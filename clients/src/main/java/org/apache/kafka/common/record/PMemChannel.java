@@ -217,22 +217,17 @@ public class PMemChannel extends FileChannel {
                 ObjectDirectory.put(file.toString(), new PersistentLong(pBlock.handle()));
                 info("Dynamically allocate " + initSize + " with handle " + pBlock.handle());
             } else {
-                if (counter.get() >= poolSize) {
-                    error("PMem heap pool is full, currentUsed = " + counter.get() + ", poolSize = " + poolSize);
-                    throw new IOException("PMem heap pool is full");
-                } else {
-                    int usedCounter = counter.incrementAndGet();
-                    ObjectDirectory.put("_pool_used", new PersistentInteger(usedCounter));
-                    pBlock = blockPool.pop();
-                    if (pBlock == null) {
-                        String msg = "block pool inconsistent, usedCounter = " + usedCounter + "， poolSize = " + poolAllocatedSize;
-                        error(msg);
-                        throw new IOException(msg);
-                    }
-                    ObjectDirectory.put(file.toString(), new PersistentLong(pBlock.handle()));
-                    ObjectDirectory.put("_pool_handle_" + pBlock.handle(), new PersistentString(file.toString()));
-                    info("create new block " + file + " with handle " + pBlock.handle());
+                int usedCounter = counter.incrementAndGet();
+                ObjectDirectory.put("_pool_used", new PersistentInteger(usedCounter));
+                pBlock = blockPool.pop();
+                if (pBlock == null) {
+                    String msg = "block pool inconsistent, usedCounter = " + usedCounter + "， poolSize = " + poolAllocatedSize;
+                    error(msg);
+                    throw new IOException(msg);
                 }
+                ObjectDirectory.put(file.toString(), new PersistentLong(pBlock.handle()));
+                ObjectDirectory.put("_pool_handle_" + pBlock.handle(), new PersistentString(file.toString()));
+                info("create new block " + file + " with handle " + pBlock.handle());
             }
             channelSize = initSize;
         }
