@@ -31,6 +31,8 @@ Vagrantfile.local
 /logs
 .DS_Store
 
+config/server-*
+config/zookeeper-*
 core/data/*
 gradle/wrapper/*.jar
 gradlew.bat
