@@ -191,9 +191,9 @@ class KafkaServer(
         // pre-allocate heap
         if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
           val path = config.pmemPath
-          val size = config.pmemSize
-          val allocatedSize = config.logSegmentBytes.intValue()
-          PMemChannel.initHeap(path, size, allocatedSize, config.pmemLogPoolRatio.doubleValue())
+          val size = config.pmemInitSize
+          val logSegmentBytes = config.logSegmentBytes.intValue()
+          PMemChannel.initHeap(path, size, logSegmentBytes)
         }
 
         /* setup zookeeper */
@@ -745,6 +745,12 @@ class KafkaServer(
         isShuttingDown.set(false)
         CoreUtils.swallow(AppInfoParser.unregisterAppInfo(Server.MetricsPrefix, config.brokerId.toString, metrics), this)
         shutdownLatch.countDown()
+
+        // close PMemHeap
+        if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
+          PMemChannel.closeHeap();
+        }
+
         info("shut down completed")
       }
     }

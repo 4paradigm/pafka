@@ -40,6 +40,10 @@ import java.util.LinkedList;
 import static java.lang.Math.min;
 import java.nio.charset.StandardCharsets;
 import java.io.RandomAccessFile;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.File;
+import java.io.IOException;
 
 import lib.util.persistent.ObjectDirectory;
 import lib.util.persistent.PersistentInteger;
@@ -71,28 +75,30 @@ class Pool<T> {
 
 public class PMemChannel extends FileChannel {
     private static final Logger log = LoggerFactory.getLogger(PMemChannel.class);
-    private static int poolAllocatedSize = 0;
+    private static int poolEntrySize = 0;
+    private static int poolEntryCount = 0;
     private static int poolSize = 0;
-    private static PersistentHeap heap;
+    private static PersistentHeap heap = null;
     private volatile static boolean inited = false;
     private static Pool<PersistentMemoryBlock> blockPool = new Pool<>();
 
     private static AtomicInteger counter = new AtomicInteger();
     private final static Object GLOBAL_LOCK = new Object();
 
-    public static void initHeap(String path, long size, int allocatedSize, double poolRatio) {
-        String heapPath = path + "/pmem_heap";
-        String metaPath = path + "/pmem_meta";
-
-        File heapDir = new File(path);
-        if (!heapDir.mkdirs()) {
-            log.debug(heapDir + " already exists.");
+    public static void initHeap(String heapPath, long poolSize, int poolEntrySize) {
+        File file = new File(heapPath);
+        boolean isDir = file.exists() && file.isDirectory();
+        String metaPath = null;
+        if (isDir) {
+            metaPath =  heapPath + "/heap.meta";
+        } else {  // poolset file
+            metaPath =  getParentDir(getFirstDir(heapPath)) + "/heap.meta";
         }
 
         // TODO(zhanghao): config.properties is required by pmdk pcj. For now we generate dynamically here
         try {
             BufferedWriter metaConfig = new BufferedWriter(new OutputStreamWriter(new FileOutputStream("config.properties"), StandardCharsets.UTF_8));
-            long metaPoolSize = (poolSize + 100) * 1024L * 1024;  // entry number will be #poolBlock + #dynamicBlock (we assume its max is 100)
+            long metaPoolSize = (poolEntryCount + 1000) * 1024L * 1024;  // entry number will be #poolBlock + #dynamicBlock (we assume its max is 1000)
             String metaConfigContent = "path=" + metaPath + "\n" + "size=" + metaPoolSize + "\n";
             metaConfig.write(metaConfigContent);
             metaConfig.flush();
@@ -103,32 +109,49 @@ public class PMemChannel extends FileChannel {
             log.error("Create MetaConfig exception", e);
         }
 
-        if (!AnyHeap.exists(heapPath)) {
-            if (poolRatio > 0.9) {
-                log.warn("poolRatio larger than 90%, may fail to allocate");
+        boolean heapExists = false;
+        try {
+            if (isDir) {
+                // if it is a directory, llpl will auto create a poolset file
+                heap = PersistentHeap.createHeap(heapPath);
+            } else { // poolset file
+                heap = PersistentHeap.createHeap(heapPath, 0);
             }
-            int poolSize = (int) (size * poolRatio / allocatedSize);
-            log.info("Init heap: size = " + size + ", poolSize = " + poolSize + " (" + (poolRatio * 100) + "% of total size)" + ", poolEntry size = " + allocatedSize);
-            ObjectDirectory.put("_heap_path", new PersistentString(heapPath));
-            ObjectDirectory.put("_pool_allocated_size", new PersistentInteger(allocatedSize));
-            ObjectDirectory.put("_pool_size", new PersistentInteger(poolSize));
+        } catch (Exception e) {
+            log.debug("Create heap exception: " + e);
+            log.debug("Try to open it");
+            heap = PersistentHeap.openHeap(heapPath);
+            heapExists = true;
+        }
 
-            PersistentHeap heap = PersistentHeap.createHeap(heapPath, size);
-            if (poolSize > 0) {
-                for (int i = 0; i < poolSize; i++) {
-                    PersistentMemoryBlock block = heap.allocateMemoryBlock(allocatedSize);
+        if (heapExists) {
+            log.info("PMem heap " + heapPath + " already exists. No need to re-init");
+        } else {
+            int poolEntryCount = (int) (poolSize / poolEntrySize);
+            log.info("Init heapPool: size = " + poolSize + ", poolEntryCount = " + poolEntryCount + ", poolEntry size = " + poolEntrySize);
+            ObjectDirectory.put("_heap_path", new PersistentString(heapPath));
+            ObjectDirectory.put("_pool_entry_size", new PersistentInteger(poolEntrySize));
+            ObjectDirectory.put("_pool_size", new PersistentInteger(poolEntryCount));
+
+            if (poolEntryCount > 0) {
+                for (int i = 0; i < poolEntryCount; i++) {
+                    PersistentMemoryBlock block = heap.allocateMemoryBlock(poolEntrySize);
                     // set data to 0
-                    // block.setMemory(0, 0, allocatedSize)
+                    // block.setMemory(0, 0, poolEntrySize)
                     ObjectDirectory.put("_pool_" + i, new PersistentLong(block.handle()));
                     log.info("init pool entry " + i);
                 }
-
-                // init pool used to 0
             }
+
+            // init pool used to 0
             ObjectDirectory.put("_pool_used", new PersistentInteger(0));
             log.info("init heap " + heapPath + " done");
-        } else {
-            log.info("PMem heap " + heapPath + " already exists. No need to re-init");
+        }
+    }
+
+    public static void closeHeap() {
+        if (heap != null) {
+            heap.close();
         }
     }
 
@@ -138,27 +161,25 @@ public class PMemChannel extends FileChannel {
 
             if (!inited) {
                 inited = true;
-                PersistentString heap_path = ObjectDirectory.get("_heap_path", PersistentString.class);
-                heap = PersistentHeap.openHeap(heap_path.toString());
-                PersistentInteger poolAllocatedSizeP = ObjectDirectory.get("_pool_allocated_size", PersistentInteger.class);
-                if (poolAllocatedSizeP != null) {
-                    poolAllocatedSize = poolAllocatedSizeP.intValue();
+                PersistentInteger poolEntrySizeP = ObjectDirectory.get("_pool_entry_size", PersistentInteger.class);
+                if (poolEntrySizeP != null) {
+                    poolEntrySize = poolEntrySizeP.intValue();
                 } else {
-                    poolAllocatedSize = 0;
-                    log.error("PMem heap is not inited (poolAllocatedSize is not set)");
+                    poolEntrySize = 0;
+                    log.error("PMem heap is not inited (poolEntrySize is not set)");
                 }
 
-                PersistentInteger poolSizeP = ObjectDirectory.get("_pool_size", PersistentInteger.class);
-                if (poolSizeP != null) {
-                    poolSize = poolSizeP.intValue();
+                PersistentInteger poolEntryCountP = ObjectDirectory.get("_pool_size", PersistentInteger.class);
+                if (poolEntryCountP != null) {
+                    poolEntryCount = poolEntryCountP.intValue();
                 } else {
-                    poolSize = 0;
-                    log.error("PMem heap poolSize is not set");
+                    poolEntryCount = 0;
+                    log.error("PMem heap poolEntryCount is not set");
                 }
 
                 counter.set(ObjectDirectory.get("_pool_used", PersistentInteger.class).intValue());
 
-                for (int i = 0; i < poolSize; i++) {
+                for (int i = 0; i < poolEntryCount; i++) {
                     long handle = ObjectDirectory.get("_pool_" + i, PersistentLong.class).longValue();
                     PersistentString fileNameP = ObjectDirectory.get("_pool_handle_" + handle, PersistentString.class);
                     if (fileNameP == null || fileNameP.length() == 0) {
@@ -166,14 +187,13 @@ public class PMemChannel extends FileChannel {
                         blockPool.push(block);
                     }
                 }
-                log.info("open heapPool with poolSize = " + poolSize + ", used = " + counter.get());
+                log.info("open heapPool with poolEntryCount = " + poolEntryCount + ", used = " + counter.get());
             }
 
             FileChannel channel = null;
             try {
                 channel = new PMemChannel(file, initFileSize, preallocate);
             } catch (HeapException e) {
-                log.error(e.toString());
                 log.info("Fail to allocate in PMem channel. Using normal Filechannel instead.");
                 if (mutable) {
                     RandomAccessFile randomAccessFile = new RandomAccessFile(file.toString(), "rw");
@@ -233,7 +253,7 @@ public class PMemChannel extends FileChannel {
             }
 
             // TODO(zhanghao): what if initSize is 0
-            if (poolSize == 0 || initSize != poolAllocatedSize || counter.get() >= poolSize) {
+            if (poolEntryCount == 0 || initSize != poolEntrySize || counter.get() >= poolEntryCount) {
                 pBlock = heap.allocateMemoryBlock(initSize);
                 ObjectDirectory.put(file.toString(), new PersistentLong(pBlock.handle()));
                 info("Dynamically allocate " + initSize + " with handle " + pBlock.handle());
@@ -242,7 +262,7 @@ public class PMemChannel extends FileChannel {
                 ObjectDirectory.put("_pool_used", new PersistentInteger(usedCounter));
                 pBlock = blockPool.pop();
                 if (pBlock == null) {
-                    String msg = "block pool inconsistent, usedCounter = " + usedCounter + "， poolSize = " + poolAllocatedSize;
+                    String msg = "block pool inconsistent, usedCounter = " + usedCounter + "， poolEntryCount = " + poolEntrySize;
                     error(msg);
                     throw new IOException(msg);
                 }
@@ -419,27 +439,27 @@ public class PMemChannel extends FileChannel {
 
     public void delete() {
         synchronized (GLOBAL_LOCK) {
-            info("Before delete PMemChannel, channelSize = " + pBlock.size() + ", poolSize = " + blockPool.size() + ", usedCounter = " + counter.get());
-            if (pBlock.size() == poolAllocatedSize) {
+            info("Before delete PMemChannel, channelSize = " + pBlock.size() + ", poolEntryCount = " + blockPool.size() + ", usedCounter = " + counter.get());
+            if (pBlock.size() == poolEntrySize) {
                 // clear the pmem metadata
                 ObjectDirectory.remove(filePath.toString(), PersistentLong.class);
                 ObjectDirectory.remove("_pool_handle_" + pBlock.handle(), PersistentString.class);
                 ObjectDirectory.remove(sizeKey, PersistentInteger.class);
 
                 // reset memory
-                // _buf.setMemory((byte)0, 0, poolAllocatedSize);
+                // _buf.setMemory((byte)0, 0, poolEntrySize);
                 // push back to pool
                 blockPool.push(pBlock);
                 int usedCounter = counter.decrementAndGet();
                 ObjectDirectory.put("_pool_used", new PersistentInteger(usedCounter));
 
-                if (poolSize - usedCounter != blockPool.size()) {
-                    error("pool free size (" + blockPool.size() + ") != poolSize - usedCounter (" + (poolSize - usedCounter) + ")");
+                if (poolEntryCount - usedCounter != blockPool.size()) {
+                    error("pool free size (" + blockPool.size() + ") != poolEntryCount - usedCounter (" + (poolEntryCount - usedCounter) + ")");
                 }
             } else {
                 pBlock.freeMemory();
             }
-            info("After delete PMemChannel, channelSize = " + pBlock.size() + ", poolSize = " + blockPool.size() + ", usedCounter = " + counter.get());
+            info("After delete PMemChannel, channelSize = " + pBlock.size() + ", poolEntryCount = " + blockPool.size() + ", usedCounter = " + counter.get());
             pBlock = null;
         }
     }
@@ -462,6 +482,50 @@ public class PMemChannel extends FileChannel {
 
     private void error(String str) {
         log.error(concatPath(str));
+    }
+
+    /*
+     * Return:
+     *  the first poolset directory in poolset file
+     *
+     * a poolset is in this format:
+     * PMEMPOOLSET
+     * OPTION SINGLEHDR
+     * 64G /mnt/pmem0/poolset/
+     * 64G /mnt/pmem1/poolset/
+     */
+    private static String getFirstDir(String poolset) {
+        String pmemPath = poolset;
+        BufferedReader br = null;
+        try {
+            br = new BufferedReader(new FileReader(poolset));
+            String line = br.readLine();
+            while (line != null) {
+                if (line.contains("/")) {
+                    pmemPath = line.split(" ")[1];
+                    break;
+                }
+                line = br.readLine();
+            }
+        } catch (Exception e) {
+            log.error("Read file " + poolset + " failed: " + e);
+        } finally {
+            try {
+                br.close();
+            } catch (IOException e) {
+                log.error("Close file " + poolset + " failed: " + e);
+            }
+        }
+
+        return pmemPath;
+    }
+
+    private static String getParentDir(String path) {
+        if (path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        int i = path.lastIndexOf(File.separator);
+        return path.substring(0, i);
     }
 
     private PersistentMemoryBlock pBlock;
