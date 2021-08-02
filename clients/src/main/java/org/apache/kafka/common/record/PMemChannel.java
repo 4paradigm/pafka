@@ -18,6 +18,8 @@
 package org.apache.kafka.common.record;
 
 import com.intel.pmem.llpl.AnyHeap;
+import com.intel.pmem.llpl.Heap;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.LinkedList;
 import static java.lang.Math.min;
 import java.nio.charset.StandardCharsets;
+import java.io.RandomAccessFile;
 
 import lib.util.persistent.ObjectDirectory;
 import lib.util.persistent.PersistentInteger;
@@ -121,21 +124,22 @@ public class PMemChannel extends FileChannel {
                 }
 
                 // init pool used to 0
-                ObjectDirectory.put("_pool_used", new PersistentInteger(0));
             }
+            ObjectDirectory.put("_pool_used", new PersistentInteger(0));
             log.info("init heap " + heapPath + " done");
         } else {
             log.info("PMem heap " + heapPath + " already exists. No need to re-init");
         }
     }
 
-    public static FileChannel open(Path file, int initFileSize, boolean preallocate) throws IOException {
+    public static FileChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
         synchronized (GLOBAL_LOCK) {
             log.info("open PMemChannel " + file.toString());
 
             if (!inited) {
                 inited = true;
-                heap = PersistentHeap.openHeap(ObjectDirectory.get("_heap_path", PersistentString.class).toString());
+                PersistentString heap_path = ObjectDirectory.get("_heap_path", PersistentString.class);
+                heap = PersistentHeap.openHeap(heap_path.toString());
                 PersistentInteger poolAllocatedSizeP = ObjectDirectory.get("_pool_allocated_size", PersistentInteger.class);
                 if (poolAllocatedSizeP != null) {
                     poolAllocatedSize = poolAllocatedSizeP.intValue();
@@ -165,9 +169,27 @@ public class PMemChannel extends FileChannel {
                 log.info("open heapPool with poolSize = " + poolSize + ", used = " + counter.get());
             }
 
-            PMemChannel channel = null;
+            FileChannel channel = null;
             try {
                 channel = new PMemChannel(file, initFileSize, preallocate);
+            } catch (HeapException e) {
+                log.error(e.toString());
+                log.info("Fail to allocate in PMem channel. Using normal Filechannel instead.");
+                if (mutable) {
+                    RandomAccessFile randomAccessFile = new RandomAccessFile(file.toString(), "rw");
+                    channel = randomAccessFile.getChannel();
+                } else {
+                    channel = FileChannel.open(file);
+                }
+                PersistentLong handleP =  ObjectDirectory.get(file.toString(), PersistentLong.class);
+                if (handleP == null) {
+                    ObjectDirectory.put(file.toString(), new PersistentLong(-1));
+                } else {
+                    if (handleP.longValue() != -1) {
+                        log.error("Encounter wrong handle value.");
+                        ObjectDirectory.put(file.toString(), new PersistentLong(-1));
+                    }
+                }
             } catch (IOException e) {
                 log.error("Create PMemChannel exception: ", e);
             }
@@ -181,6 +203,10 @@ public class PMemChannel extends FileChannel {
 
         PersistentLong handleP = ObjectDirectory.get(file.toString(), PersistentLong.class);
         if (handleP != null) {  // already allocate, recover
+            if (handleP.longValue() < 0) {
+                HeapException e = new HeapException("null");
+                throw e;
+            }
             long handle = handleP.longValue();
             pBlock = heap.memoryBlockFromHandle(handle);
             if (initSize != 0) {
@@ -208,12 +234,7 @@ public class PMemChannel extends FileChannel {
 
             // TODO(zhanghao): what if initSize is 0
             if (poolSize == 0 || initSize != poolAllocatedSize || counter.get() >= poolSize) {
-                try {
-                    pBlock = heap.allocateMemoryBlock(initSize);
-                } catch (HeapException e) {
-                    error(e.toString());
-                    throw e;
-                }
+                pBlock = heap.allocateMemoryBlock(initSize);
                 ObjectDirectory.put(file.toString(), new PersistentLong(pBlock.handle()));
                 info("Dynamically allocate " + initSize + " with handle " + pBlock.handle());
             } else {

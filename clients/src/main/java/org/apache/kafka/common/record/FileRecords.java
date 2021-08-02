@@ -483,7 +483,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
                                            int initFileSize,
                                            boolean preallocate, FileChannelType channelType) throws IOException {
         if (channelType == FileChannelType.PMEM) {
-            return PMemChannel.open(file.toPath(), initFileSize, preallocate);
+            return PMemChannel.open(file.toPath(), initFileSize, preallocate, mutable);
         } else {
             if (mutable) {
                 if (fileAlreadyExists || !preallocate) {
