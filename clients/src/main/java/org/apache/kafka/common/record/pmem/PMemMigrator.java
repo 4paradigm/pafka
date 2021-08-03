@@ -1,4 +1,4 @@
-package org.apache.kafka.common.record;
+package org.apache.kafka.common.record.pmem;
 
 import lib.util.persistent.ObjectDirectory;
 import lib.util.persistent.PersistentInteger;

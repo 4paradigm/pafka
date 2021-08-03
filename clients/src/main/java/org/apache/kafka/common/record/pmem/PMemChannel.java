@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.kafka.common.record;
+package org.apache.kafka.common.record.pmem;
 
 import com.intel.pmem.llpl.AnyHeap;
 import com.intel.pmem.llpl.Heap;
@@ -145,6 +145,11 @@ class MetaStore {
 };
 
 public class PMemChannel extends FileChannel {
+    enum Mode {
+        PMEM,
+        FILE
+    }
+
     private static final Logger log = LoggerFactory.getLogger(PMemChannel.class);
     private static int poolEntrySize = 0;
     private static int poolEntryCount = 0;
@@ -165,6 +170,9 @@ public class PMemChannel extends FileChannel {
     public final static String POOL_ENTRY_PREFIX = "_pool_";
     public final static String POOL_ENTRY_USED = "_pool_entry_used";
     public final static String POOL_HANDLE_PREFIX = "_pool_handle_";
+
+    // instance members
+    private Mode mode = Mode.PMEM;
 
     public static void initHeap(String heapPath, long poolSize, int poolEntrySize) {
         File file = new File(heapPath);
@@ -356,6 +364,15 @@ public class PMemChannel extends FileChannel {
             debug(file + " already exits");
         }
         info("Allocate PMemChannel with size " + channelSize);
+    }
+
+    public Mode getMode() {
+        return this.mode;
+    }
+
+    public Mode setMode(Mode m) {
+        this.mode = m;
+        return this.mode;
     }
 
     @Override
