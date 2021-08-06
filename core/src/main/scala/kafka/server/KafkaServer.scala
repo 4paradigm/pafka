@@ -38,7 +38,7 @@ import kafka.zk.{AdminZkClient, BrokerInfo, KafkaZkClient}
 import org.apache.kafka.clients.{ApiVersions, ClientDnsLookup, ManualMetadataUpdater, NetworkClient, NetworkClientUtils}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
-import org.apache.kafka.common.record.pmem.PMemChannel
+import org.apache.kafka.common.record.pmem.{MixChannel, PMemChannel}
 import org.apache.kafka.common.message.ControlledShutdownRequestData
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network._
@@ -195,6 +195,8 @@ class KafkaServer(
           val size = config.pmemInitSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
           PMemChannel.initHeap(path, size, logSegmentBytes)
+          // FIXME(zhanghao): put in a config
+          MixChannel.init("/tmp/mix.meta")
         }
 
         /* setup zookeeper */

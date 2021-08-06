@@ -25,9 +25,9 @@ class Migrate implements Runnable {
     @Override
     public void run() {
         while (!stop) {
-            log.info(name + " running");
+            log.debug(name + " running");
             try {
-                Thread.sleep(5000);
+                Thread.sleep(1000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }

@@ -19,6 +19,7 @@ package org.apache.kafka.common.record;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.network.TransferableChannel;
 import org.apache.kafka.common.record.FileLogInputStream.FileChannelRecordBatch;
+import org.apache.kafka.common.record.pmem.MixChannel;
 import org.apache.kafka.common.record.pmem.PMemChannel;
 import org.apache.kafka.common.utils.AbstractIterator;
 import org.apache.kafka.common.utils.Time;
@@ -226,8 +227,8 @@ public class FileRecords extends AbstractRecords implements Closeable {
      */
     public boolean deleteIfExists() throws IOException {
         Utils.closeQuietly(channel, "FileChannel");
-        if (channel instanceof PMemChannel) {
-            ((PMemChannel) channel).delete();
+        if (channel instanceof MixChannel) {
+            ((MixChannel) channel).delete();
         }
         return Files.deleteIfExists(file.toPath());
     }
@@ -484,7 +485,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
                                            int initFileSize,
                                            boolean preallocate, FileChannelType channelType) throws IOException {
         if (channelType == FileChannelType.PMEM) {
-            return PMemChannel.open(file.toPath(), initFileSize, preallocate, mutable);
+            return MixChannel.open(file.toPath(), initFileSize, preallocate, mutable);
         } else {
             if (mutable) {
                 if (fileAlreadyExists || !preallocate) {

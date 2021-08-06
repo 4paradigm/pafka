@@ -1,0 +1,90 @@
+package org.apache.kafka.common.record.pmem;
+
+import lib.util.persistent.ObjectDirectory;
+import lib.util.persistent.PersistentInteger;
+import lib.util.persistent.PersistentLong;
+import lib.util.persistent.PersistentString;
+
+import java.io.BufferedWriter;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
+
+public class PMemMetaStore extends MetaStore {
+    public PMemMetaStore(String path, long size) {
+        // TODO(zhanghao): config.properties is required by pmdk pcj. For now we generate dynamically here
+        try {
+            BufferedWriter metaConfig = new BufferedWriter(new OutputStreamWriter(
+                    new FileOutputStream("config.properties"), StandardCharsets.UTF_8));
+            String metaConfigContent = "path=" + path + "\n" + "size=" + size + "\n";
+            metaConfig.write(metaConfigContent);
+            metaConfig.flush();
+            metaConfig.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void putInt(String key, int value) {
+        ObjectDirectory.put(key, new PersistentInteger(value));
+    }
+
+    @Override
+    public void putLong(String key, long value) {
+        ObjectDirectory.put(key, new PersistentLong(value));
+    }
+
+    @Override
+    public void put(String key, String value) {
+        ObjectDirectory.put(key, new PersistentString(value));
+    }
+
+    @Override
+    public int getInt(String key) {
+        PersistentInteger value = ObjectDirectory.get(key, PersistentInteger.class);
+        if (value == null) {
+            return NOT_EXIST_INT;
+        } else {
+            return value.intValue();
+        }
+    }
+
+    @Override
+    public long getLong(String key) {
+        PersistentLong value = ObjectDirectory.get(key, PersistentLong.class);
+        if (value == null) {
+            return NOT_EXIST_LONG;
+        } else {
+            return value.longValue();
+        }
+    }
+
+    @Override
+    public String get(String key) {
+        PersistentString value = ObjectDirectory.get(key, PersistentString.class);
+        if (value == null) {
+            return null;
+        } else {
+            return value.toString();
+        }
+    }
+
+    public void removeInt(String key) {
+        ObjectDirectory.remove(key, PersistentInteger.class);
+    }
+
+    public void removeLong(String key) {
+        ObjectDirectory.remove(key, PersistentLong.class);
+    }
+
+    public void removeString(String key) {
+        ObjectDirectory.remove(key, PersistentString.class);
+    }
+
+    @Override
+    public void del(String key) {
+        removeString(key);
+    }
+};

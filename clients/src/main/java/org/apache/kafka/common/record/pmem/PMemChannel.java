@@ -38,17 +38,10 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.LinkedList;
 import static java.lang.Math.min;
-import java.nio.charset.StandardCharsets;
 import java.io.RandomAccessFile;
 import java.io.BufferedReader;
 import java.io.FileReader;
-import java.io.File;
-import java.io.IOException;
 
-import lib.util.persistent.ObjectDirectory;
-import lib.util.persistent.PersistentInteger;
-import lib.util.persistent.PersistentString;
-import lib.util.persistent.PersistentLong;
 import com.intel.pmem.llpl.PersistentHeap;
 import com.intel.pmem.llpl.HeapException;
 import com.intel.pmem.llpl.PersistentMemoryBlock;
@@ -73,83 +66,7 @@ class Pool<T> {
     private LinkedList<T> items = new LinkedList<>();
 };
 
-class MetaStore {
-    public final static String NOT_EXIST_STR = "__not_exists__";
-    public final static int NOT_EXIST_INT = Integer.MIN_VALUE;
-    public final static long NOT_EXIST_LONG = Long.MIN_VALUE;
-
-    public MetaStore(String path, long size) {
-        // TODO(zhanghao): config.properties is required by pmdk pcj. For now we generate dynamically here
-        try {
-            BufferedWriter metaConfig = new BufferedWriter(new OutputStreamWriter(
-                    new FileOutputStream("config.properties"), StandardCharsets.UTF_8));
-            String metaConfigContent = "path=" + path + "\n" + "size=" + size + "\n";
-            metaConfig.write(metaConfigContent);
-            metaConfig.flush();
-            metaConfig.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void putInt(String key, int value) {
-        ObjectDirectory.put(key, new PersistentInteger(value));
-    }
-
-    public void putLong(String key, long value) {
-        ObjectDirectory.put(key, new PersistentLong(value));
-    }
-
-    public void putString(String key, String value) {
-        ObjectDirectory.put(key, new PersistentString(value));
-    }
-
-    public int getInt(String key) {
-        PersistentInteger value = ObjectDirectory.get(key, PersistentInteger.class);
-        if (value == null) {
-            return NOT_EXIST_INT;
-        } else {
-            return value.intValue();
-        }
-    }
-
-    public long getLong(String key) {
-        PersistentLong value = ObjectDirectory.get(key, PersistentLong.class);
-        if (value == null) {
-            return NOT_EXIST_LONG;
-        } else {
-            return value.longValue();
-        }
-    }
-
-    public String getString(String key) {
-        PersistentString value = ObjectDirectory.get(key, PersistentString.class);
-        if (value == null) {
-            return NOT_EXIST_STR;
-        } else {
-            return value.toString();
-        }
-    }
-
-    public void removeInt(String key) {
-        ObjectDirectory.remove(key, PersistentInteger.class);
-    }
-
-    public void removeLong(String key) {
-        ObjectDirectory.remove(key, PersistentLong.class);
-    }
-
-    public void removeString(String key) {
-        ObjectDirectory.remove(key, PersistentString.class);
-    }
-};
-
 public class PMemChannel extends FileChannel {
-    enum Mode {
-        PMEM,
-        FILE
-    }
-
     private static final Logger log = LoggerFactory.getLogger(PMemChannel.class);
     private static int poolEntrySize = 0;
     private static int poolEntryCount = 0;
@@ -161,7 +78,7 @@ public class PMemChannel extends FileChannel {
     private static AtomicInteger counter = new AtomicInteger();
     private final static Object GLOBAL_LOCK = new Object();
 
-    private static MetaStore metaStore = null;
+    private static PMemMetaStore metaStore = null;
     private static PMemMigrator migrator = null;
 
     public final static String HEAP_PATH = "_heap_path";
@@ -170,9 +87,6 @@ public class PMemChannel extends FileChannel {
     public final static String POOL_ENTRY_PREFIX = "_pool_";
     public final static String POOL_ENTRY_USED = "_pool_entry_used";
     public final static String POOL_HANDLE_PREFIX = "_pool_handle_";
-
-    // instance members
-    private Mode mode = Mode.PMEM;
 
     public static void initHeap(String heapPath, long poolSize, int poolEntrySize) {
         File file = new File(heapPath);
@@ -186,7 +100,7 @@ public class PMemChannel extends FileChannel {
 
         // entry number will be #poolBlock + #dynamicBlock (we assume its max is 1000)
         long metaPoolSize = (poolEntryCount + 1000) * 1024L * 1024;
-        metaStore = new MetaStore(metaPath, metaPoolSize);
+        metaStore = new PMemMetaStore(metaPath, metaPoolSize);
 
         boolean heapExists = false;
         try {
@@ -268,7 +182,7 @@ public class PMemChannel extends FileChannel {
                 for (int i = 0; i < poolEntryCount; i++) {
                     long handle = metaStore.getLong(POOL_ENTRY_PREFIX + i);
                     String fileName = metaStore.getString(POOL_HANDLE_PREFIX + handle);
-                    if (fileName.compareTo(MetaStore.NOT_EXIST_STR) == 0) {
+                    if (fileName == null || fileName.isEmpty()) {
                         PersistentMemoryBlock block = heap.memoryBlockFromHandle(handle);
                         blockPool.push(block);
                     } else {
@@ -278,29 +192,7 @@ public class PMemChannel extends FileChannel {
                 log.info("open heapPool with poolEntryCount = " + poolEntryCount + ", used = " + counter.get());
             }
 
-            FileChannel channel = null;
-            try {
-                channel = new PMemChannel(file, initFileSize, preallocate);
-            } catch (HeapException e) {
-                log.info("Fail to allocate in PMem channel. Using normal Filechannel instead.");
-                if (mutable) {
-                    RandomAccessFile randomAccessFile = new RandomAccessFile(file.toString(), "rw");
-                    channel = randomAccessFile.getChannel();
-                } else {
-                    channel = FileChannel.open(file);
-                }
-                long handle =  metaStore.getLong(file.toString());
-                if (handle == MetaStore.NOT_EXIST_LONG) {
-                    metaStore.putLong(file.toString(), -1);
-                } else {
-                    if (handle != -1) {
-                        log.error("Encounter wrong handle value.");
-                        metaStore.putLong(file.toString(), -1);
-                    }
-                }
-            } catch (IOException e) {
-                log.error("Create PMemChannel exception: ", e);
-            }
+            FileChannel channel = new PMemChannel(file, initFileSize, preallocate);
             return channel;
         }
     }
@@ -364,15 +256,6 @@ public class PMemChannel extends FileChannel {
             debug(file + " already exits");
         }
         info("Allocate PMemChannel with size " + channelSize);
-    }
-
-    public Mode getMode() {
-        return this.mode;
-    }
-
-    public Mode setMode(Mode m) {
-        this.mode = m;
-        return this.mode;
     }
 
     @Override
