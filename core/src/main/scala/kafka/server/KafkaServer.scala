@@ -194,7 +194,7 @@ class KafkaServer(
           val path = config.pmemPath
           val size = config.pmemInitSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
-          PMemChannel.initHeap(path, size, logSegmentBytes)
+          PMemChannel.init(path, size, logSegmentBytes)
           // FIXME(zhanghao): put in a config
           MixChannel.init("/tmp/mix.meta")
         }
@@ -751,7 +751,7 @@ class KafkaServer(
 
         // close PMemHeap
         if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
-          PMemChannel.closeHeap();
+          PMemChannel.stop();
         }
 
         info("shut down completed")

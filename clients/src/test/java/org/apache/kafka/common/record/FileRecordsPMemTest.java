@@ -44,7 +44,7 @@ public class FileRecordsPMemTest extends FileRecordsTest {
         String path = pmemDir + "/heap";
         long size = 1024L * 1024 * 1024 * 10;
         int initSize = 10 * 1024 * 1024;
-        PMemChannel.initHeap(path, size, initSize);
+        PMemChannel.init(path, size, initSize);
 
         FileRecords fileRecords = FileRecords.open(tempFile(), true, false, initSize, true, FileRecords.FileChannelType.PMEM);
         return fileRecords;

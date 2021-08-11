@@ -88,6 +88,7 @@ public class MixChannel extends FileChannel {
                 this.mode = Mode.PMEM;
             } catch (Exception e) {
                 log.info("Fail to allocate in " + defaultMode + " channel. Using normal FileChannel instead.");
+                log.info(e.toString());
                 this.channels[Mode.FILE.value] = openFileChannel(file, initFileSize, preallocate, mutable);
                 this.mode = Mode.FILE;
 
