@@ -97,7 +97,7 @@ public class PMemChannel extends FileChannel {
 
             metaConfig.close();
         } catch (IOException e) {
-            e.printStackTrace();
+            log.error("Create MetaConfig exception", e);
         }
 
         if (!AnyHeap.exists(heapPath)) {
@@ -169,7 +169,7 @@ public class PMemChannel extends FileChannel {
             try {
                 channel = new PMemChannel(file, initFileSize, preallocate);
             } catch (IOException e) {
-                log.error("Create PMemChannel exception: " + e);
+                log.error("Create PMemChannel exception: ", e);
             }
             return channel;
         }
