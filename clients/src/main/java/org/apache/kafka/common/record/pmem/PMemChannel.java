@@ -18,7 +18,6 @@
 package org.apache.kafka.common.record.pmem;
 
 import com.intel.pmem.llpl.MemoryPool;
-import com.intel.pmem.llpl.PersistentHeap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,7 +25,6 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -39,6 +37,7 @@ import java.nio.file.Paths;
 import java.util.LinkedList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static java.lang.Math.abs;
 import static java.lang.Math.min;
 
 class Pool<T> {
@@ -81,19 +80,17 @@ class Pair<T1, T2> {
 
 public class PMemChannel extends FileChannel {
     private static final Logger log = LoggerFactory.getLogger(PMemChannel.class);
-    private static int poolEntrySize = 0;
-    private static int poolEntryCount = 0;
-    private static int poolSize = 0;
-    private static String pmemRootPath = null;
-    private static PersistentHeap heap = null;
-    private volatile static boolean inited = false;
-    private static Pool<Pair<String, MemoryPool>> blockPool = new Pool<>();
+    private static int poolEntrySizeG = 0;
+    private static int poolEntryCountG = 0;
+    private static int poolSizeG = 0;
+    private static String pmemRootPathG = null;
+    private volatile static boolean initedG = false;
+    private static Pool<Pair<String, MemoryPool>> blockPoolG = new Pool<>();
 
-    private static AtomicInteger counter = new AtomicInteger();
+    private static AtomicInteger counterG = new AtomicInteger();
     private final static Object GLOBAL_LOCK = new Object();
 
     private static PMemMetaStore metaStore = null;
-    private static PMemMigrator migrator = null;
 
     public final static String POOL_ENTRY_SIZE = "_pool_entry_size_";
     public final static String POOL_ENTRY_COUNT = "_pool_entry_count_";
@@ -102,44 +99,44 @@ public class PMemChannel extends FileChannel {
     public final static String POOL_ENTRY_USED = "_pool_entry_used_";
     public final static String POOL_INITED = "_inited_";
 
-    public static void init(String path, long poolSize, int poolEntrySize) {
-        pmemRootPath = path;
-        File file = new File(pmemRootPath);
+    public static void init(String path, long poolSize, int blockSize) {
+        pmemRootPathG = path;
+        File file = new File(pmemRootPathG);
         boolean isDir = file.exists() && file.isDirectory();
         String metaPath = null;
         if (isDir) {
-            metaPath =  pmemRootPath + "/heap.meta";
+            metaPath =  pmemRootPathG + "/pool.meta";
         } else {  // poolset file
-            log.warn("pmemRootPath is a poolset file: " + pmemRootPath);
-            metaPath =  getParentDir(getFirstDir(pmemRootPath)) + "/heap.meta";
+            log.warn("pmemRootPath is a poolset file: " + pmemRootPathG);
+            metaPath =  getParentDir(getFirstDir(pmemRootPathG)) + "/pool.meta";
         }
 
         // entry number will be #poolBlock + #dynamicBlock (we assume its max is 1000)
-        long metaPoolSize = (poolEntryCount + 1000) * 1024L * 1024;
+        long metaPoolSize = (poolEntryCountG + 1000) * 1024L * 1024;
         metaStore = new PMemMetaStore(metaPath, metaPoolSize);
 
         String poolInited = metaStore.get(POOL_INITED);
         if (poolInited != null && !poolInited.isEmpty()) {
-            log.info("PMem Pool already initted.");
+            log.info("PMem Pool already inited.");
         } else {
-            int poolEntryCount = (int) (poolSize / poolEntrySize);
-            log.info("Init heapPool: size = " + poolSize + ", poolEntryCount = " + poolEntryCount + ", poolEntry size = " + poolEntrySize);
-            metaStore.putInt(POOL_ENTRY_SIZE, poolEntrySize);
+            int poolEntryCount = (int) (poolSize / blockSize);
+            log.info("Init pool: size = " + poolSize + ", poolEntryCount = " + poolEntryCount + ", poolEntry size = " + blockSize);
+            metaStore.putInt(POOL_ENTRY_SIZE, blockSize);
             metaStore.putInt(POOL_ENTRY_COUNT, poolEntryCount);
 
             if (poolEntryCount > 0) {
                 for (int i = 0; i < poolEntryCount; i++) {
                     MemoryPool pool = null;
                     String relativePoolPath = POOL_ENTRY_PREFIX + i;
-                    String poolPath = Join(pmemRootPath, relativePoolPath);
+                    String poolPath = Join(pmemRootPathG, relativePoolPath);
                     if (MemoryPool.exists(poolPath)) {
                         pool = MemoryPool.openPool(poolPath);
                         log.warn(poolPath + " already exists");
                     } else {
-                        pool = MemoryPool.createPool(poolPath, poolEntrySize);
+                        pool = MemoryPool.createPool(poolPath, blockSize);
                     }
                     // memset pool
-                    pool.setMemoryNT((byte)0, 0, poolEntrySize);
+                    pool.setMemoryNT((byte) 0, 0, blockSize);
                     metaStore.put(relativePoolPath, POOL_NOT_IN_USE);
                     log.info("init pool entry " + i);
                 }
@@ -148,52 +145,43 @@ public class PMemChannel extends FileChannel {
             // init pool used to 0
             metaStore.putInt(POOL_ENTRY_USED, 0);
             metaStore.put(POOL_INITED, POOL_INITED);
-            log.info("init heap " + pmemRootPath + " done");
+            log.info("init pmem " + pmemRootPathG + " done");
         }
 
-        if (!inited) {
-            inited = true;
-            poolEntrySize = metaStore.getInt(POOL_ENTRY_SIZE);
-            if (poolEntrySize == MetaStore.NOT_EXIST_INT) {
-                poolEntrySize = 0;
-                log.error("PMem heap is not inited (poolEntrySize is not set)");
+        if (!initedG) {
+            initedG = true;
+            poolEntrySizeG = metaStore.getInt(POOL_ENTRY_SIZE);
+            if (poolEntrySizeG == MetaStore.NOT_EXIST_INT) {
+                poolEntrySizeG = 0;
+                log.error("PMem pool is not inited (poolEntrySize is not set)");
             }
 
-            poolEntryCount = metaStore.getInt(POOL_ENTRY_COUNT);
-            if (poolEntryCount == MetaStore.NOT_EXIST_INT) {
-                poolEntryCount = 0;
-                log.error("PMem heap poolEntryCount is not set");
+            poolEntryCountG = metaStore.getInt(POOL_ENTRY_COUNT);
+            if (poolEntryCountG == MetaStore.NOT_EXIST_INT) {
+                poolEntryCountG = 0;
+                log.error("PMem poolEntryCount is not set");
             }
 
             int used = metaStore.getInt(POOL_ENTRY_USED);
             if (used == MetaStore.NOT_EXIST_INT) {
                 used = 0;
             }
-            counter.set(used);
+            counterG.set(used);
 
-            for (int i = 0; i < poolEntryCount; i++) {
+            for (int i = 0; i < poolEntryCountG; i++) {
                 String relativePoolPath = POOL_ENTRY_PREFIX + i;
                 String idPath = metaStore.get(relativePoolPath);
                 if (idPath.compareTo(POOL_NOT_IN_USE) == 0) {
-                    MemoryPool pool = MemoryPool.openPool(Join(pmemRootPath, relativePoolPath));
-                    blockPool.push(new Pair<>(relativePoolPath, pool));
+                    MemoryPool pool = MemoryPool.openPool(Join(pmemRootPathG, relativePoolPath));
+                    blockPoolG.push(new Pair<>(relativePoolPath, pool));
                 } else {
                     log.info("Pool entry " + i + " in use");
                 }
             }
-            log.info("init PMem pool with poolEntryCount = " + poolEntryCount + ", used = " + counter.get());
+            log.info("init PMem pool with poolEntryCount = " + poolEntryCountG + ", used = "
+                    + counterG.get() + ", poolEntrySize = " + poolEntrySizeG);
         } else {
             log.error("pool already inited");
-        }
-
-        // start migration background threads
-        migrator = new PMemMigrator(2);
-        migrator.start();
-    }
-
-    public static void stop() throws InterruptedException {
-        if (migrator != null) {
-            migrator.stop();
         }
     }
 
@@ -213,7 +201,7 @@ public class PMemChannel extends FileChannel {
         mpRelativePath = metaStore.get(relativePath);
         // already allocate, recover
         if (mpRelativePath != null && !mpRelativePath.isEmpty()) {
-            memoryPool = MemoryPool.openPool(Join(pmemRootPath, mpRelativePath));
+            memoryPool = MemoryPool.openPool(Join(pmemRootPathG, mpRelativePath));
 
             // load the buffer size
             channelSize = metaStore.getInt(sizeKey);
@@ -225,33 +213,35 @@ public class PMemChannel extends FileChannel {
                 error("initSize not 0 for recovered channel. initSize = " + initSize + ", buf.size = " + memoryPool.size());
                 truncate(initSize);
             }
-            info("recover MemoryPool @ " + Join(pmemRootPath, mpRelativePath));
+            info("recover MemoryPool (size: " + channelSize + ") @ " + Join(pmemRootPathG, mpRelativePath));
         } else {  // allocate new block
             if (initSize == 0) {
                 error("PMemChannel initSize 0 (have to set log.preallocate=true)");
             }
 
             // TODO(zhanghao): what if initSize is 0
-            if (poolEntryCount == 0 || initSize != poolEntrySize || counter.get() >= poolEntryCount) {
-                File parentFile = new File(Join(pmemRootPath, relativePath)).getParentFile();
+            info("poolEntryCount = " + poolEntryCountG + ", initSize = " + initSize + ", poolEntrySize = " + poolEntrySizeG
+                    + ", counter = " + counterG.get() + ", poolEntryCount = " + poolEntryCountG);
+            if (poolEntryCountG == 0 || !similarSize(initSize, poolEntrySizeG) || counterG.get() >= poolEntryCountG) {
+                File parentFile = new File(Join(pmemRootPathG, relativePath)).getParentFile();
                 parentFile.mkdirs();
 
                 mpRelativePath = relativePath;
-                String path = Join(pmemRootPath, mpRelativePath);
+                String path = Join(pmemRootPathG, mpRelativePath);
                 memoryPool = MemoryPool.createPool(path, initSize);
                 metaStore.put(relativePath, mpRelativePath);
                 info("Dynamically allocate " + initSize + " @ " + path);
             } else {
-                int usedCounter = counter.incrementAndGet();
+                int usedCounter = counterG.incrementAndGet();
                 // TODO(zhanghao): what to do if POOL_ENTRY_USED not consistent
                 metaStore.putInt(POOL_ENTRY_USED, usedCounter);
-                Pair<String, MemoryPool> pair = blockPool.pop();
+                Pair<String, MemoryPool> pair = blockPoolG.pop();
                 this.memoryPool = pair.snd();
                 this.mpRelativePath = pair.fst();
                 if (memoryPool == null) {
                     String msg = "block pool inconsistent, usedCounter = "
-                            + usedCounter + "， poolEntryCount = " + poolEntryCount
-                            + ", poolSize = " + blockPool.size();
+                            + usedCounter + "， poolEntryCount = " + poolEntryCountG
+                            + ", poolSize = " + blockPoolG.size();
                     error(msg);
                     throw new IOException(msg);
                 }
@@ -260,13 +250,13 @@ public class PMemChannel extends FileChannel {
                 info("allocate from existing pool @ " + mpRelativePath);
             }
             channelSize = initSize;
+            info("Allocate PMemChannel with size " + channelSize);
         }
 
         // create an empty log file as Kafka will check its existence
         if (!file.toFile().createNewFile()) {
             debug(file + " already exits");
         }
-        info("Allocate PMemChannel with size " + channelSize);
     }
 
     @Override
@@ -336,6 +326,10 @@ public class PMemChannel extends FileChannel {
     @Override
     public long size() throws IOException {
         return channelSize;
+    }
+
+    public long occupiedSize() {
+        return memoryPool.size();
     }
 
     @Override
@@ -429,8 +423,12 @@ public class PMemChannel extends FileChannel {
     }
 
     public void delete() {
+        delete(true);
+    }
+
+    public void delete(boolean deleteOrigFile) {
         synchronized (GLOBAL_LOCK) {
-            info("Before delete PMemChannel, channelSize = " + memoryPool.size() + ", poolEntryCount = " + blockPool.size() + ", usedCounter = " + counter.get());
+            info("Before delete PMemChannel, channelSize = " + memoryPool.size() + ", poolEntryCount = " + blockPoolG.size() + ", usedCounter = " + counterG.get());
             metaStore.del(relativePath);
             metaStore.removeInt(sizeKey);
 
@@ -439,29 +437,33 @@ public class PMemChannel extends FileChannel {
                 metaStore.put(mpRelativePath, POOL_NOT_IN_USE);
 
                 // push back to pool
-                blockPool.push(new Pair<>(mpRelativePath, memoryPool));
-                int usedCounter = counter.decrementAndGet();
+                blockPoolG.push(new Pair<>(mpRelativePath, memoryPool));
+                int usedCounter = counterG.decrementAndGet();
                 metaStore.putInt(POOL_ENTRY_USED, usedCounter);
 
-                if (poolEntryCount - usedCounter != blockPool.size()) {
-                    error("pool free size (" + blockPool.size() + ") != poolEntryCount - usedCounter (" + (poolEntryCount - usedCounter) + ")");
+                if (poolEntryCountG - usedCounter != blockPoolG.size()) {
+                    error("pool free size (" + blockPoolG.size() + ") != poolEntryCount - usedCounter (" + (poolEntryCountG - usedCounter) + ")");
                 }
             } else {
-                Path p1 = Paths.get(pmemRootPath, mpRelativePath);
+                Path p1 = Paths.get(pmemRootPathG, mpRelativePath);
+                info("Delete file " + p1.toString());
                 try {
                     Files.deleteIfExists(p1);
                 } catch (IOException e) {
                     error("delete file " + p1 + " error: " + e);
                 }
-                Path p2 = filePath;
-                try {
-                    Files.deleteIfExists(p2);
-                } catch (IOException e) {
-                    error("delete file " + p2 + " error: " + e);
+                if (deleteOrigFile) {
+                    Path p2 = filePath;
+                    info("Delete file " + p2.toString());
+                    try {
+                        Files.deleteIfExists(p2);
+                    } catch (IOException e) {
+                        error("delete file " + p2 + " error: " + e);
+                    }
                 }
             }
             info("After delete PMemChannel, channelSize = " + memoryPool.size() +
-                    ", poolEntryCount = " + blockPool.size() + ", usedCounter = " + counter.get());
+                    ", poolEntryCount = " + blockPoolG.size() + ", usedCounter = " + counterG.get());
             memoryPool = null;
         }
     }
@@ -532,6 +534,14 @@ public class PMemChannel extends FileChannel {
 
     private static String Join(String path1, String path2) {
         return Paths.get(path1, path2).toString();
+    }
+
+    private boolean similarSize(long size1, long size2) {
+        if (abs(size1 - size2) < 10L * 1024 * 1024) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     private MemoryPool memoryPool;

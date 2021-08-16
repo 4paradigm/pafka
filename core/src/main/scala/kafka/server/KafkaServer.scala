@@ -751,7 +751,7 @@ class KafkaServer(
 
         // close PMemHeap
         if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
-          PMemChannel.stop();
+          MixChannel.stop();
         }
 
         info("shut down completed")

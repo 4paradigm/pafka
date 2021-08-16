@@ -1,10 +1,24 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.apache.kafka.common.record.pmem;
 
-import com.intel.pmem.llpl.HeapException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
@@ -15,6 +29,7 @@ import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 
 public class MixChannel extends FileChannel {
@@ -22,14 +37,16 @@ public class MixChannel extends FileChannel {
         PMEM(0),
         NVME(1),
         SSD(2),
-        FILE(3);
+        HDD(3);
 
         public int value;
-        public static final int length = Mode.values().length;
-        private Mode(int value) { this.value = value; }
+        public static final int LEN = Mode.values().length;
+        private Mode(int value) {
+            this.value = value;
+        }
 
         public static Mode fromInteger(int x) {
-            switch(x) {
+            switch (x) {
                 case 0:
                     return PMEM;
                 case 1:
@@ -37,35 +54,81 @@ public class MixChannel extends FileChannel {
                 case 2:
                     return SSD;
                 case 3:
-                    return FILE;
+                    return HDD;
             }
             return null;
         }
-    }
+
+        public boolean higherThan(Mode other) {
+            return value < other.value;
+        }
+
+        public boolean equal(Mode other) {
+            return value == other.value;
+        }
+    };
+
+    enum Status {
+        INIT,
+        MIGRATION;
+    };
+
 
     private static final Logger log = LoggerFactory.getLogger(MixChannel.class);
     private static Mode defaultMode = Mode.PMEM;
-    private static MetaStore metaStore;
+    private static MetaStore metaStore = null;
+    private static PMemMigrator migrator = null;
     
-    private Mode mode = defaultMode;
+    private volatile Mode mode = defaultMode;
+    private Status status = Status.INIT;
+
     /**
      * use different location for different channels to avoid thread-risk issues
      */
     private FileChannel[] channels = null;
 
     private Path path = null;
+    private String relativePath = null;
+    // namespace is like topic in the context of Kafka
+    private String namespace = null;
+    private long id = -1;
+
+    public static Mode getDefaultMode() {
+        return defaultMode;
+    }
 
     public static void init(String path) {
         metaStore = new RocksdbMetaStore(path);
+
+        // start migration background threads
+        // FIXME(zhanghao): make it configrable
+        migrator = new PMemMigrator(2, 1024L * 1024 * 1024 * 15, 0.6);
+        migrator.start();
+    }
+
+    public static void stop() throws InterruptedException {
+        if (migrator != null) {
+            migrator.stop();
+        }
     }
 
     public static MixChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
-        return new MixChannel(file, initFileSize, preallocate, mutable);
+        MixChannel ch = new MixChannel(file, initFileSize, preallocate, mutable);
+        migrator.add(ch);
+        return ch;
     }
 
     public MixChannel(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
-        path = file;
-        this.channels = new FileChannel[Mode.length];
+        this.path = file;
+        this.relativePath = Paths.get(file.getParent().getFileName().toString(), file.getFileName().toString()).toString();
+        String[] toks = this.relativePath.split("/");
+        if (toks.length != 2) {
+            throw new RuntimeException(this.relativePath + " not in the format of topic/id.log");
+        }
+        this.namespace = toks[0];
+        this.id = Long.parseLong(toks[1].split("\\.")[0]);
+
+        this.channels = new FileChannel[Mode.LEN];
 
         int modeValue = metaStore.getInt(file.toString());
         if (modeValue != MetaStore.NOT_EXIST_INT) {
@@ -74,8 +137,8 @@ public class MixChannel extends FileChannel {
                 case PMEM:
                     this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
                     break;
-                case FILE:
-                    this.channels[Mode.FILE.value] = openFileChannel(file, initFileSize, preallocate, mutable);
+                case HDD:
+                    this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
                     break;
                 default:
                     log.error("Not support ChannelModel " + this.mode);
@@ -87,10 +150,9 @@ public class MixChannel extends FileChannel {
                 this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
                 this.mode = Mode.PMEM;
             } catch (Exception e) {
-                log.info("Fail to allocate in " + defaultMode + " channel. Using normal FileChannel instead.");
-                log.info(e.toString());
-                this.channels[Mode.FILE.value] = openFileChannel(file, initFileSize, preallocate, mutable);
-                this.mode = Mode.FILE;
+                log.info("Fail to allocate in " + defaultMode + " channel. Using normal FileChannel instead.", e);
+                this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
+                this.mode = Mode.HDD;
 
                 modeValue = metaStore.getInt(file.toString());
                 if (modeValue != MetaStore.NOT_EXIST_INT && this.mode.value != modeValue) {
@@ -99,6 +161,30 @@ public class MixChannel extends FileChannel {
             }
             metaStore.putInt(file.toString(), this.mode.value);
         }
+        log.info("Create MixChannel " + this.mode + ", path = " + file + ", initSize = "
+                + initFileSize + ", preallocate = " + preallocate + ", mutable = " + mutable);
+    }
+
+    public String getNamespace() {
+        return this.namespace;
+    }
+
+    public long getId() {
+        return this.id;
+    }
+
+    @Override
+    public String toString() {
+        return "MixChannel " + getNamespace() + "/" + getId();
+    }
+
+    public Status setStatus(Status s) {
+        this.status = s;
+        return s;
+    }
+
+    public Status getStatus() {
+        return this.status;
     }
 
     public Mode getMode() {
@@ -114,16 +200,17 @@ public class MixChannel extends FileChannel {
         FileChannel newChannel = null;
         switch (m) {
             case PMEM:
-                newChannel = PMemChannel.open(this.path, (int)this.size(), true, true);
+                newChannel = PMemChannel.open(this.path, (int) this.size(), true, true);
                 break;
-            case FILE:
-                newChannel = openFileChannel(this.path, (int)this.size(), true, true);
+            case HDD:
+                newChannel = openFileChannel(this.path, (int) this.size(), true, true);
                 break;
             default:
                 log.error("Not support Mode: " + m);
         }
 
         FileChannel oldChannel = getChannel();
+        Mode oldMode = getMode();
         long size = oldChannel.size();
         long transferred = 0;
         do {
@@ -131,8 +218,23 @@ public class MixChannel extends FileChannel {
         } while (transferred < size);
 
         this.channels[m.value] = newChannel;
-        // until this point, the newChannel not take effect
+        // until this point, the newChannel will take effect
         this.mode = m;
+        metaStore.putInt(path.toString(), this.mode.value);
+
+        // FIXME(zhanghao): concurrency risk
+        switch (oldMode) {
+            case PMEM:
+                ((PMemChannel) oldChannel).delete(false);
+                break;
+            case HDD:
+                RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
+                randomAccessFile.setLength(0);
+                break;
+            default:
+                log.error("Not support " + oldMode);
+        }
+        this.channels[oldMode.value] = null;
         return this.mode;
     }
 
@@ -173,6 +275,19 @@ public class MixChannel extends FileChannel {
     @Override
     public long size() throws IOException {
         return getChannel().size();
+    }
+
+    public long occupiedSize() {
+        if (getMode() == Mode.PMEM) {
+            return ((PMemChannel) getChannel()).occupiedSize();
+        } else {
+            try {
+                return size();
+            } catch (IOException e) {
+                log.error("get size() exception: ", e);
+                return 0;
+            }
+        }
     }
 
     @Override
@@ -221,14 +336,14 @@ public class MixChannel extends FileChannel {
     }
 
     public void delete() throws IOException {
-        for (int i = 0; i < Mode.length; i++) {
+        for (int i = 0; i < Mode.LEN; i++) {
             FileChannel channel = this.channels[i];
             if (channel == null) {
                 continue;
             }
 
             Mode cmode = Mode.fromInteger(i);
-            if (cmode == Mode.FILE) {
+            if (cmode == Mode.HDD) {
                 Files.deleteIfExists(path);
             } else if (cmode == Mode.PMEM) {
                 ((PMemChannel) channel).delete();

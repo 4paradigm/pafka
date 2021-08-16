@@ -158,6 +158,7 @@
     </subpackage>
 
     <subpackage name="record">
+      <allow pkg="org.rocksdb" />
       <allow pkg="org.apache.kafka.common.compress" />
       <allow pkg="org.apache.kafka.common.header" />
       <allow pkg="org.apache.kafka.common.record" />
