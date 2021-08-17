@@ -31,6 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.io.File;
 
 public class MixChannel extends FileChannel {
     enum Mode {
@@ -97,12 +98,20 @@ public class MixChannel extends FileChannel {
         return defaultMode;
     }
 
-    public static void init(String path) {
-        metaStore = new RocksdbMetaStore(path);
+    public static void init(String path, long capacity, double threshold, int migrateThreads) {
+        metaStore = new RocksdbMetaStore(path + "/.meta");
+
+        /**
+         * use all the storage space if capacity is configured to -1
+         */
+        if (capacity == -1) {
+            File file = new File(path);
+            capacity = file.getTotalSpace();
+        }
+        log.info(defaultMode + " capacity is set to " + capacity);
 
         // start migration background threads
-        // FIXME(zhanghao): make it configrable
-        migrator = new PMemMigrator(2, 1024L * 1024 * 1024 * 15, 0.6);
+        migrator = new PMemMigrator(migrateThreads, capacity, threshold);
         migrator.start();
     }
 

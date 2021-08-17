@@ -124,8 +124,8 @@ public class PMemMigrator {
             while (!stop) {
                 // check the threshold
                 synchronized (lock) {
-                    log.info("used: " + (used >> 20) + " MB, limit: " + (capacity >> 20) +
-                            " MB, threshold: " + (((long)(capacity * threshold)) >> 20) + " MB");
+                    log.info("used: " + (used >> 20) + " MB, threshold: " + (((long)(capacity * threshold)) >> 20) +
+                            "MB, limit: " + (capacity >> 20) + " MB");
                     if (used >= capacity * threshold) {
                         Iterator<MixChannel> it = channels.iterator();
                         while (it.hasNext()) {
@@ -209,6 +209,11 @@ public class PMemMigrator {
 
     public void start() {
         for (int i = 0; i < this.threadPool.length; i++) {
+            if (i == this.threadPool.length - 1) {
+                log.info("Start migration scheduler");
+            } else {
+                log.info("Start migrator " + i);
+            }
             threadPool[i].start();
         }
     }

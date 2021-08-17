@@ -284,9 +284,11 @@ object Defaults {
 
   /** ********* PMem storage Configuration **************/
   val PMemPath = "/tmp/pmem"
-  val PmemLogPoolRatio = 0.8
-  val PMemSize : Long = 0
+  val PMemLogPoolRatio = 0.8
+  val PMemSize : Long = -1
   val LogChannelType = "file"
+  val MigrateThreads = 1
+  val MigrateThreshold = 0.6
 }
 
 object KafkaConfig {
@@ -609,6 +611,8 @@ object KafkaConfig {
   val PMemSizeProp = "storage.pmem.size"
   val PMemLogPoolRatioProp = "log.pmem.pool.ratio"
   val LogChannelTypeProp = "log.channel.type"
+  val MigrateThreadsProp = "migrate.threads"
+  val MigrateThresholdProp = "migrate.threshold"
 
   /* Documentation */
   /** ********* Zookeeper Configuration ***********/
@@ -1043,6 +1047,8 @@ object KafkaConfig {
    val PMemLogPoolRatioDoc = s"PMem log pool proportion of total pmem size. Only used if $LogChannelTypeProp == pmem"
    val PMemSizeDoc = s"PMem capacity. Only used if $LogChannelTypeProp == pmem"
    val LogChannelTypeDoc = "Log channel type (e.g., file, pmem)"
+   val MigrateThreadsDoc = s"The number of threads used to do migration between different storage layers"
+   val MigrateThresholdDoc = s"The usage percentage of high layer storage, until which we start to do migration"
 
   private[server] val configDef = {
     import ConfigDef.Importance._
@@ -1335,9 +1341,11 @@ object KafkaConfig {
 
       /** ********* PMmem storage config *********/
       .define(PMemPathProp, STRING, Defaults.PMemPath, MEDIUM, PMemPathDoc)
-      .define(PMemLogPoolRatioProp, DOUBLE, Defaults.PmemLogPoolRatio, MEDIUM, PMemLogPoolRatioDoc)
+      .define(PMemLogPoolRatioProp, DOUBLE, Defaults.PMemLogPoolRatio, MEDIUM, PMemLogPoolRatioDoc)
       .define(PMemSizeProp, LONG, Defaults.PMemSize, MEDIUM, PMemSizeDoc)
       .define(LogChannelTypeProp, STRING, Defaults.LogChannelType, MEDIUM, LogChannelTypeDoc)
+      .define(MigrateThreadsProp, INT, Defaults.MigrateThreads, MEDIUM, MigrateThreadsDoc)
+      .define(MigrateThresholdProp, DOUBLE, Defaults.MigrateThreshold, MEDIUM, MigrateThresholdDoc)
   }
 
   def configNames: Seq[String] = configDef.names.asScala.toBuffer.sorted
@@ -1799,6 +1807,8 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
   val pmemLogPoolRatio = getDouble(KafkaConfig.PMemLogPoolRatioProp)
   val pmemSize = getLong(KafkaConfig.PMemSizeProp)
   val logChannelType = getString(KafkaConfig.LogChannelTypeProp)
+  val migrateThreads = getInt(KafkaConfig.MigrateThreadsProp)
+  val migrateThreshold = getDouble(KafkaConfig.MigrateThresholdProp)
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)

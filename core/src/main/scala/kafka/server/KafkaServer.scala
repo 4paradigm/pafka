@@ -194,9 +194,11 @@ class KafkaServer(
           val path = config.pmemPath
           val size = config.pmemSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
+          val migrateThreshold = config.migrateThreshold.doubleValue()
+          val migrateThreads = config.migrateThreads.intValue()
+
           PMemChannel.init(path, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
-          // FIXME(zhanghao): put in a config
-          MixChannel.init("/tmp/mix.meta")
+          MixChannel.init(path, size, migrateThreshold, migrateThreads)
         }
 
         /* setup zookeeper */
