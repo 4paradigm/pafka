@@ -284,7 +284,8 @@ object Defaults {
 
   /** ********* PMem storage Configuration **************/
   val PMemPath = "/tmp/pmem"
-  val PMemInitSize : Long = 0
+  val PmemLogPoolRatio = 0.8
+  val PMemSize : Long = 0
   val LogChannelType = "file"
 }
 
@@ -605,7 +606,8 @@ object KafkaConfig {
 
   /** ********* pmem-related configs *********/
   val PMemPathProp = "storage.pmem.path"
-  val PMemInitSizeProp = "storage.pmem.size"
+  val PMemSizeProp = "storage.pmem.size"
+  val PMemLogPoolRatioProp = "log.pmem.pool.ratio"
   val LogChannelTypeProp = "log.channel.type"
 
   /* Documentation */
@@ -1037,8 +1039,9 @@ object KafkaConfig {
   val PasswordEncoderIterationsDoc =  "The iteration count used for encoding dynamically configured passwords."
 
    /** ********* PMmem storage config *********/
-   val PMemPathDoc = s"PMem poolset set file. Only used if $LogChannelTypeProp == pmem"
-   val PMemInitSizeDoc = s"PMem pre-allocated size. Only used if $LogChannelTypeProp == pmem"
+   val PMemPathDoc = s"PMem device mount location. Only used if $LogChannelTypeProp == pmem"
+   val PMemLogPoolRatioDoc = s"PMem log pool proportion of total pmem size. Only used if $LogChannelTypeProp == pmem"
+   val PMemSizeDoc = s"PMem capacity. Only used if $LogChannelTypeProp == pmem"
    val LogChannelTypeDoc = "Log channel type (e.g., file, pmem)"
 
   private[server] val configDef = {
@@ -1332,7 +1335,8 @@ object KafkaConfig {
 
       /** ********* PMmem storage config *********/
       .define(PMemPathProp, STRING, Defaults.PMemPath, MEDIUM, PMemPathDoc)
-      .define(PMemInitSizeProp, LONG, Defaults.PMemInitSize, MEDIUM, PMemInitSizeDoc)
+      .define(PMemLogPoolRatioProp, DOUBLE, Defaults.PmemLogPoolRatio, MEDIUM, PMemLogPoolRatioDoc)
+      .define(PMemSizeProp, LONG, Defaults.PMemSize, MEDIUM, PMemSizeDoc)
       .define(LogChannelTypeProp, STRING, Defaults.LogChannelType, MEDIUM, LogChannelTypeDoc)
   }
 
@@ -1792,7 +1796,8 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
 
   /** ********* PMem storage Configuration **************/
   val pmemPath = getString(KafkaConfig.PMemPathProp)
-  val pmemInitSize = getLong(KafkaConfig.PMemInitSizeProp)
+  val pmemLogPoolRatio = getDouble(KafkaConfig.PMemLogPoolRatioProp)
+  val pmemSize = getLong(KafkaConfig.PMemSizeProp)
   val logChannelType = getString(KafkaConfig.LogChannelTypeProp)
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {

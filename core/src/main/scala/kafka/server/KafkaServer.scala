@@ -192,9 +192,9 @@ class KafkaServer(
         // pre-allocate heap
         if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
           val path = config.pmemPath
-          val size = config.pmemInitSize
+          val size = config.pmemSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
-          PMemChannel.init(path, size, logSegmentBytes)
+          PMemChannel.init(path, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
           // FIXME(zhanghao): put in a config
           MixChannel.init("/tmp/mix.meta")
         }

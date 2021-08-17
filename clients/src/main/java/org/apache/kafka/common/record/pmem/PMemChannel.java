@@ -99,7 +99,7 @@ public class PMemChannel extends FileChannel {
     public final static String POOL_ENTRY_USED = "_pool_entry_used_";
     public final static String POOL_INITED = "_inited_";
 
-    public static void init(String path, long poolSize, int blockSize) {
+    public static void init(String path, long size, int blockSize, double poolRatio) {
         pmemRootPathG = path;
         File file = new File(pmemRootPathG);
         boolean isDir = file.exists() && file.isDirectory();
@@ -119,8 +119,9 @@ public class PMemChannel extends FileChannel {
         if (poolInited != null && !poolInited.isEmpty()) {
             log.info("PMem Pool already inited.");
         } else {
-            int poolEntryCount = (int) (poolSize / blockSize);
-            log.info("Init pool: size = " + poolSize + ", poolEntryCount = " + poolEntryCount + ", poolEntry size = " + blockSize);
+            int poolEntryCount = (int) (size * poolRatio / blockSize);
+            log.info("Init pool: size = " + size + ", poolEntryCount = " + poolEntryCount
+                    + " (" + (poolRatio * 100) + "% of total size), poolEntry size = " + blockSize);
             metaStore.putInt(POOL_ENTRY_SIZE, blockSize);
             metaStore.putInt(POOL_ENTRY_COUNT, poolEntryCount);
 
