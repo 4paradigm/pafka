@@ -79,6 +79,9 @@ public class MixChannel extends FileChannel {
     private static Mode defaultMode = Mode.PMEM;
     private static MetaStore metaStore = null;
     private static PMemMigrator migrator = null;
+    private static volatile long highCapacity = -1;
+    private static volatile long highUsed = 0;
+    private final static Object GLOBAL_LOCK = new Object();
     
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
@@ -90,7 +93,9 @@ public class MixChannel extends FileChannel {
 
     private Path path = null;
     private String relativePath = null;
-    // namespace is like topic in the context of Kafka
+    /**
+     * namespace is like topic in the context of Kafka
+     */
     private String namespace = null;
     private long id = -1;
 
@@ -101,13 +106,12 @@ public class MixChannel extends FileChannel {
     public static void init(String path, long capacity, double threshold, int migrateThreads) {
         metaStore = new RocksdbMetaStore(path + "/.meta");
 
-        /**
-         * use all the storage space if capacity is configured to -1
-         */
+        // use all the storage space if capacity is configured to -1
         if (capacity == -1) {
             File file = new File(path);
             capacity = file.getTotalSpace();
         }
+        highCapacity = capacity;
         log.info(defaultMode + " capacity is set to " + capacity);
 
         // start migration background threads
@@ -122,7 +126,10 @@ public class MixChannel extends FileChannel {
     }
 
     public static MixChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
-        MixChannel ch = new MixChannel(file, initFileSize, preallocate, mutable);
+        MixChannel ch = null;
+        synchronized (GLOBAL_LOCK) {
+            ch = new MixChannel(file, initFileSize, preallocate, mutable);
+        }
         migrator.add(ch);
         return ch;
     }
@@ -139,7 +146,7 @@ public class MixChannel extends FileChannel {
 
         this.channels = new FileChannel[Mode.LEN];
 
-        int modeValue = metaStore.getInt(file.toString());
+        int modeValue = metaStore.getInt(relativePath);
         if (modeValue != MetaStore.NOT_EXIST_INT) {
             this.mode = Mode.fromInteger(modeValue);
             switch (mode) {
@@ -156,19 +163,22 @@ public class MixChannel extends FileChannel {
         } else {
             try {
                 // TODO(zhanghao): support other default channel
-                this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
-                this.mode = Mode.PMEM;
+                if (highUsed + initFileSize <= highCapacity) {
+                    this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
+                    this.mode = Mode.PMEM;
+                    highUsed += initFileSize;
+                } else {
+                    log.info(defaultMode + " used (" + (highUsed + initFileSize) + " Bytes) exceeds limit (" + highCapacity
+                            + " Bytes). Using normal FileChannel instead.");
+                    this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
+                    this.mode = Mode.HDD;
+                }
             } catch (Exception e) {
                 log.info("Fail to allocate in " + defaultMode + " channel. Using normal FileChannel instead.", e);
                 this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
                 this.mode = Mode.HDD;
-
-                modeValue = metaStore.getInt(file.toString());
-                if (modeValue != MetaStore.NOT_EXIST_INT && this.mode.value != modeValue) {
-                    log.error("realPath for " + file.toString() + " already exists: " + modeValue + ", but != " + modeValue);
-                }
             }
-            metaStore.putInt(file.toString(), this.mode.value);
+            metaStore.putInt(relativePath, this.mode.value);
         }
         log.info("Create MixChannel " + this.mode + ", path = " + file + ", initSize = "
                 + initFileSize + ", preallocate = " + preallocate + ", mutable = " + mutable);
@@ -229,9 +239,13 @@ public class MixChannel extends FileChannel {
         this.channels[m.value] = newChannel;
         // until this point, the newChannel will take effect
         this.mode = m;
-        metaStore.putInt(path.toString(), this.mode.value);
+        metaStore.putInt(relativePath, this.mode.value);
 
-        // FIXME(zhanghao): concurrency risk
+        /**
+         * FIXME(zhanghao): concurrency risk
+         * the concurrency risk is the case there are other readers are reading the data
+         * writers are not possible as we only change the mode for Channels that are stable
+         */
         switch (oldMode) {
             case PMEM:
                 ((PMemChannel) oldChannel).delete(false);
@@ -244,6 +258,11 @@ public class MixChannel extends FileChannel {
                 log.error("Not support " + oldMode);
         }
         this.channels[oldMode.value] = null;
+        synchronized (GLOBAL_LOCK) {
+            if (oldMode.higherThan(this.mode)) {
+                highUsed -= this.occupiedSize();
+            }
+        }
         return this.mode;
     }
 

@@ -121,11 +121,17 @@ public class PMemMigrator {
 
         @Override
         public void run() {
+            try {
+                Thread.sleep(10000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
             while (!stop) {
                 // check the threshold
                 synchronized (lock) {
                     log.info("used: " + (used >> 20) + " MB, threshold: " + (((long)(capacity * threshold)) >> 20) +
-                            "MB, limit: " + (capacity >> 20) + " MB");
+                            " MB, limit: " + (capacity >> 20) + " MB");
                     if (used >= capacity * threshold) {
                         Iterator<MixChannel> it = channels.iterator();
                         while (it.hasNext()) {
