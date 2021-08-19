@@ -59,6 +59,7 @@ public class PMemMigrator {
             log.info("Running task: migrating " + channel.toString() + " to " + mode);
             try {
                 this.channel.setMode(this.mode);
+                this.channel.setStatus(MixChannel.Status.INIT);
             } catch (IOException e) {
                 log.error("Migrate error: " + e.getMessage());
             }

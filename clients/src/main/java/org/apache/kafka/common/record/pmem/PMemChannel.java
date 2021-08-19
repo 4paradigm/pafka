@@ -82,7 +82,7 @@ public class PMemChannel extends FileChannel {
     private static final Logger log = LoggerFactory.getLogger(PMemChannel.class);
     private static int poolEntrySizeG = 0;
     private static int poolEntryCountG = 0;
-    private static int poolSizeG = 0;
+    private static long pSizeG = 0;
     private static String pmemRootPathG = null;
     private volatile static boolean initedG = false;
     private static Pool<Pair<String, MemoryPool>> blockPoolG = new Pool<>();
@@ -101,6 +101,7 @@ public class PMemChannel extends FileChannel {
 
     public static void init(String path, long size, int blockSize, double poolRatio) {
         pmemRootPathG = path;
+        pSizeG = size;
         File file = new File(pmemRootPathG);
         boolean isDir = file.exists() && file.isDirectory();
         String metaPath = null;

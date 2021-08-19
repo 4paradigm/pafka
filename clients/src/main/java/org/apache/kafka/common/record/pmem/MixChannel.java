@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.io.File;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MixChannel extends FileChannel {
     enum Mode {
@@ -82,14 +83,18 @@ public class MixChannel extends FileChannel {
     private static volatile long highCapacity = -1;
     private static volatile long highUsed = 0;
     private final static Object GLOBAL_LOCK = new Object();
-    
+
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
+    private final Object lock = new Object();
+    private boolean deleted = false;
+    private AtomicInteger readCount = new AtomicInteger(0);
+    private AtomicInteger writeCount = new AtomicInteger(0);
 
     /**
      * use different location for different channels to avoid thread-risk issues
      */
-    private FileChannel[] channels = null;
+    private volatile FileChannel[] channels = null;
 
     private Path path = null;
     private String relativePath = null;
@@ -236,28 +241,49 @@ public class MixChannel extends FileChannel {
             transferred += oldChannel.transferTo(transferred, size, newChannel);
         } while (transferred < size);
 
-        this.channels[m.value] = newChannel;
-        // until this point, the newChannel will take effect
-        this.mode = m;
-        metaStore.putInt(relativePath, this.mode.value);
+        synchronized (this.lock) {
+            /**
+             * there may be a case, where another thread is deleting this channel, acquired the lock
+             * after delete, we have to abort the transform and delete any related resources
+             */
+            if (deleted) {
+                if (m == Mode.HDD) {
+                    Files.deleteIfExists(path);
+                } else if (m == Mode.PMEM) {
+                    ((PMemChannel) newChannel).delete();
+                } else {
+                    log.error("Not support channel " + mode);
+                }
 
-        /**
-         * FIXME(zhanghao): concurrency risk
-         * the concurrency risk is the case there are other readers are reading the data
-         * writers are not possible as we only change the mode for Channels that are stable
-         */
-        switch (oldMode) {
-            case PMEM:
-                ((PMemChannel) oldChannel).delete(false);
-                break;
-            case HDD:
-                RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
-                randomAccessFile.setLength(0);
-                break;
-            default:
-                log.error("Not support " + oldMode);
+                return m;
+            }
+
+            this.channels[m.value] = newChannel;
+            // until this point, the newChannel will take effect
+            this.mode = m;
+            metaStore.putInt(relativePath, this.mode.value);
+
+            /**
+             * the concurrency risk is the case there are other readers are reading the data
+             * writers are not possible as we only change the mode for Channels that are stable (old segments)
+             * Our strategy: we wait until all the onging tasks complete
+             */
+            while (readCount.get() != 0);
+            while (writeCount.get() != 0);
+            switch (oldMode) {
+                case PMEM:
+                    ((PMemChannel) oldChannel).delete(false);
+                    break;
+                case HDD:
+                    RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
+                    randomAccessFile.setLength(0);
+                    break;
+                default:
+                    log.error("Not support " + oldMode);
+            }
+            this.channels[oldMode.value] = null;
         }
-        this.channels[oldMode.value] = null;
+
         synchronized (GLOBAL_LOCK) {
             if (oldMode.higherThan(this.mode)) {
                 highUsed -= this.occupiedSize();
@@ -272,32 +298,74 @@ public class MixChannel extends FileChannel {
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
-        return getChannel().read(dst);
+        readCount.incrementAndGet();
+        int ret = 0;
+        try {
+            ret = getChannel().read(dst);
+        } finally {
+            readCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public long read(ByteBuffer[] dsts, int offset, int length) throws IOException {
-        return getChannel().read(dsts, offset, length);
+        readCount.incrementAndGet();
+        long ret = 0;
+        try {
+            ret = getChannel().read(dsts, offset, length);
+        } finally {
+            readCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public int write(ByteBuffer src) throws IOException {
-        return getChannel().write(src);
+        writeCount.incrementAndGet();
+        int ret = 0;
+        try {
+            ret = getChannel().write(src);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public long write(ByteBuffer[] srcs, int offset, int length) throws IOException {
-        return getChannel().write(srcs, offset, length);
+        writeCount.incrementAndGet();
+        long ret = 0;
+        try {
+            ret = getChannel().write(srcs, offset, length);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public long position() throws IOException {
-        return getChannel().position();
+        readCount.incrementAndGet();
+        long ret = 0;
+        try {
+            ret = getChannel().position();
+        } finally {
+            readCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public FileChannel position(long newPosition) throws IOException {
-        return getChannel().position(newPosition);
+        writeCount.incrementAndGet();
+        FileChannel ret = null;
+        try {
+            ret = getChannel().position(newPosition);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
@@ -320,32 +388,72 @@ public class MixChannel extends FileChannel {
 
     @Override
     public FileChannel truncate(long size) throws IOException {
-        return getChannel().truncate(size);
+        writeCount.incrementAndGet();
+        FileChannel ret = null;
+        try {
+            ret =  getChannel().truncate(size);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public void force(boolean metaData) throws IOException {
-        getChannel().force(metaData);
+        writeCount.incrementAndGet();
+        try {
+            getChannel().force(metaData);
+        } finally {
+            writeCount.decrementAndGet();
+        }
     }
 
     @Override
     public long transferTo(long position, long count, WritableByteChannel target) throws IOException {
-        return getChannel().transferTo(position, count, target);
+        readCount.incrementAndGet();
+        long ret = 0;
+        try {
+            ret = getChannel().transferTo(position, count, target);
+        } finally {
+            readCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public long transferFrom(ReadableByteChannel src, long position, long count) throws IOException {
-        return getChannel().transferFrom(src, position, count);
+        writeCount.incrementAndGet();
+        long ret = 0;
+        try {
+            ret = getChannel().transferFrom(src, position, count);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public int read(ByteBuffer dst, long position) throws IOException {
-        return getChannel().read(dst, position);
+        readCount.incrementAndGet();
+        int ret = 0;
+        try {
+            ret = getChannel().read(dst, position);
+        } finally {
+            readCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
     public int write(ByteBuffer src, long position) throws IOException {
-        return getChannel().write(src, position);
+        writeCount.incrementAndGet();
+        int ret = 0;
+        try {
+            ret = getChannel().write(src, position);
+        } finally {
+            writeCount.decrementAndGet();
+        }
+        return ret;
     }
 
     @Override
@@ -364,20 +472,27 @@ public class MixChannel extends FileChannel {
     }
 
     public void delete() throws IOException {
-        for (int i = 0; i < Mode.LEN; i++) {
-            FileChannel channel = this.channels[i];
-            if (channel == null) {
-                continue;
+        synchronized (this.lock) {
+            for (int i = 0; i < Mode.LEN; i++) {
+                FileChannel channel = this.channels[i];
+                if (channel == null) {
+                    continue;
+                }
+
+                Mode cmode = Mode.fromInteger(i);
+                if (cmode == Mode.HDD) {
+                    Files.deleteIfExists(path);
+                } else if (cmode == Mode.PMEM) {
+                    ((PMemChannel) channel).delete();
+                } else {
+                    log.error("Not support channel " + cmode);
+                }
+
+                this.channels[i] = null;
             }
 
-            Mode cmode = Mode.fromInteger(i);
-            if (cmode == Mode.HDD) {
-                Files.deleteIfExists(path);
-            } else if (cmode == Mode.PMEM) {
-                ((PMemChannel) channel).delete();
-            } else {
-                log.error("Not support channel " + cmode);
-            }
+            metaStore.del(relativePath);
+            deleted = true;
         }
     }
 
