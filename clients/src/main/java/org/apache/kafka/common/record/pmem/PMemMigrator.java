@@ -79,23 +79,13 @@ public class PMemMigrator {
             while (!stop) {
                 MigrateTask task = null;
                 synchronized (lock) {
-                    for (MigrateTask t : highToLow) {
-                        task = t;
-                        break;
-                    }
-                    if (task != null) {
-                        // FIXME(zhanghao): O(n) time complexity
-                        highToLow.remove(task);
+                    if (highToLow.size() > 0) {
+                        task = highToLow.pop();
                     }
 
                     if (task == null) {
-                        for (MigrateTask t : lowToHigh) {
-                            task = t;
-                            break;
-                        }
-                        // FIXME(zhanghao): O(n) time complexity
-                        if (task != null) {
-                            lowToHigh.remove(task);
+                        if (lowToHigh.size() > 0) {
+                            task = lowToHigh.pop();
                         }
                     }
                 }
@@ -211,6 +201,18 @@ public class PMemMigrator {
             if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
                 used += channel.occupiedSize();
             }
+        }
+    }
+
+    /**
+     * This will only be called when Kafka shutting down (closing all the channels)
+     * It is used to avoid to handle closed Channel during the shutting down period
+     * Performance is not significant
+     * @param channel
+     */
+    public void remove(MixChannel channel) {
+        synchronized (lock) {
+            channels.remove(channel);
         }
     }
 

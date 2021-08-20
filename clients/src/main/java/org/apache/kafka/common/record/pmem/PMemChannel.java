@@ -218,7 +218,9 @@ public class PMemChannel extends FileChannel {
             info("recover MemoryPool (size: " + channelSize + ") @ " + Join(pmemRootPathG, mpRelativePath));
         } else {  // allocate new block
             if (initSize == 0) {
-                error("PMemChannel initSize 0 (have to set log.preallocate=true)");
+                String msg = "PMemChannel initSize 0 (have to set log.preallocate=true)";
+                error(msg);
+                throw new RuntimeException(msg);
             }
 
             // TODO(zhanghao): what if initSize is 0
@@ -252,7 +254,6 @@ public class PMemChannel extends FileChannel {
                 info("allocate from existing pool @ " + mpRelativePath);
             }
             channelSize = initSize;
-            info("Allocate PMemChannel with size " + channelSize);
         }
 
         // create an empty log file as Kafka will check its existence

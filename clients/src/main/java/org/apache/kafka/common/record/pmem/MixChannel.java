@@ -498,6 +498,8 @@ public class MixChannel extends FileChannel {
 
     @Override
     protected void implCloseChannel() throws IOException {
+        migrator.remove(this);
+
         for (FileChannel channel : this.channels) {
             if (channel != null) {
                 channel.close();
