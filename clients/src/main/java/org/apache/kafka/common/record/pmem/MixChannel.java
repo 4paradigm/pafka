@@ -160,6 +160,18 @@ public class MixChannel extends FileChannel {
                     break;
                 case HDD:
                     this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
+
+                    /*
+                     * The following code is to handle cases:
+                     * - during migration from HDD to PMEM: after new PMemChannel allocated, program crash
+                     *   before we change the mode meta in metaStore.
+                     *   Our strategy is to delete the PMEM channel and insist what we got from metaStore.
+                     */
+                    if (PMemChannel.exists(file)) {
+                        log.error(file + " exist, but no info from metaStore.");
+                        PMemChannel ch = (PMemChannel) PMemChannel.open(file, initFileSize, preallocate, mutable);
+                        ch.delete();
+                    }
                     break;
                 default:
                     log.error("Not support ChannelModel " + this.mode);
@@ -221,6 +233,11 @@ public class MixChannel extends FileChannel {
             return m;
         }
 
+        /*
+         * if it crash in the middle, we have to clean the newly-allocated, but not-in-used PMem channels
+         * For HDD FileChannel, it is ok, as the migration is deterministic,
+         * during next startup, we'll do the same migration strategy and will override the same file.
+         */
         FileChannel newChannel = null;
         switch (m) {
             case PMEM:
@@ -242,7 +259,7 @@ public class MixChannel extends FileChannel {
         } while (transferred < size);
 
         synchronized (this.lock) {
-            /**
+            /*
              * there may be a case, where another thread is deleting this channel, acquired the lock
              * after delete, we have to abort the transform and delete any related resources
              */
@@ -263,7 +280,7 @@ public class MixChannel extends FileChannel {
             this.mode = m;
             metaStore.putInt(relativePath, this.mode.value);
 
-            /**
+            /*
              * the concurrency risk is the case there are other readers are reading the data
              * writers are not possible as we only change the mode for Channels that are stable (old segments)
              * Our strategy: we wait until all the onging tasks complete

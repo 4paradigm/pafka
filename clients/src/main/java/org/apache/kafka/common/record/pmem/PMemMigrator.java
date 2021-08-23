@@ -112,6 +112,7 @@ public class PMemMigrator {
 
         @Override
         public void run() {
+            // wait for the existing channels initialization phase to complete
             try {
                 Thread.sleep(10000);
             } catch (InterruptedException e) {
