@@ -21,6 +21,7 @@ import org.rocksdb.RocksDBException;
 import org.rocksdb.Options;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.nio.charset.StandardCharsets;
 
 public class RocksdbMetaStore extends MetaStore {
     static boolean libLoaded = false;
@@ -28,11 +29,15 @@ public class RocksdbMetaStore extends MetaStore {
 
     private RocksDB db;
 
-    public RocksdbMetaStore(String path) {
+    private static void loadLib() {
         if (!libLoaded) {
             RocksDB.loadLibrary();
             libLoaded = true;
         }
+    }
+
+    public RocksdbMetaStore(String path) {
+        loadLib();
 
         // the Options class contains a set of configurable DB options
         // that determines the behaviour of the database.
@@ -47,7 +52,7 @@ public class RocksdbMetaStore extends MetaStore {
     @Override
     public void put(String key, String value) {
         try {
-            this.db.put(key.getBytes(), value.getBytes());
+            this.db.put(key.getBytes(StandardCharsets.UTF_8), value.getBytes(StandardCharsets.UTF_8));
         } catch (RocksDBException e) {
             log.error(e.getMessage());
         }
@@ -57,17 +62,17 @@ public class RocksdbMetaStore extends MetaStore {
     public String get(String key) {
         byte[] value = null;
         try {
-            value = this.db.get(key.getBytes());
+            value = this.db.get(key.getBytes(StandardCharsets.UTF_8));
         } catch (RocksDBException e) {
             log.error(e.getMessage());
         }
-        return value == null ? null : new String(value);
+        return value == null ? null : new String(value, StandardCharsets.UTF_8);
     }
 
     @Override
     public void del(String key) {
         try {
-            this.db.delete(key.getBytes());
+            this.db.delete(key.getBytes(StandardCharsets.UTF_8));
         } catch (RocksDBException e) {
             log.error(e.getMessage());
         }

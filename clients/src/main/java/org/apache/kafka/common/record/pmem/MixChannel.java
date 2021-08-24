@@ -29,10 +29,11 @@ import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.apache.kafka.common.record.pmem.PMemChannel.toRelativePath;
 
 public class MixChannel extends FileChannel {
     enum Mode {
@@ -75,15 +76,42 @@ public class MixChannel extends FileChannel {
         MIGRATION;
     };
 
+    private static class Stat {
+        private volatile long capacity = -1;
+        private volatile long used = 0;
+
+        void setCapacity(long capacity) {
+            this.capacity = capacity;
+        }
+
+        long getCapacity() {
+            return this.capacity;
+        }
+
+        void setUsed(long used) {
+            this.used = used;
+        }
+
+        void addUsed(long delta) {
+            setUsed(this.used + delta);
+        }
+
+        void minusUsed(long delta) {
+            setUsed(this.used - delta);
+        }
+
+        long getUsed() {
+            return this.used;
+        }
+    };
+
 
     private static final Logger log = LoggerFactory.getLogger(MixChannel.class);
     private static Mode defaultMode = Mode.PMEM;
     private static MetaStore metaStore = null;
     private static PMemMigrator migrator = null;
-    private static volatile long highCapacity = -1;
-    private static volatile long highUsed = 0;
     private final static Object GLOBAL_LOCK = new Object();
-
+    private static  Stat highStat = new Stat();
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
     private final Object lock = new Object();
@@ -94,7 +122,7 @@ public class MixChannel extends FileChannel {
     /**
      * use different location for different channels to avoid thread-risk issues
      */
-    private volatile FileChannel[] channels = null;
+    private FileChannel[] channels = null;
 
     private Path path = null;
     private String relativePath = null;
@@ -116,7 +144,7 @@ public class MixChannel extends FileChannel {
             File file = new File(path);
             capacity = file.getTotalSpace();
         }
-        highCapacity = capacity;
+        highStat.setCapacity(capacity);
         log.info(defaultMode + " capacity is set to " + capacity);
 
         // start migration background threads
@@ -141,7 +169,7 @@ public class MixChannel extends FileChannel {
 
     public MixChannel(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
         this.path = file;
-        this.relativePath = Paths.get(file.getParent().getFileName().toString(), file.getFileName().toString()).toString();
+        this.relativePath = toRelativePath(file);
         String[] toks = this.relativePath.split("/");
         if (toks.length != 2) {
             throw new RuntimeException(this.relativePath + " not in the format of topic/id.log");
@@ -157,6 +185,7 @@ public class MixChannel extends FileChannel {
             switch (mode) {
                 case PMEM:
                     this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
+                    highStat.addUsed(((PMemChannel) this.channels[Mode.PMEM.value]).occupiedSize());
                     break;
                 case HDD:
                     this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
@@ -180,12 +209,12 @@ public class MixChannel extends FileChannel {
         } else {
             try {
                 // TODO(zhanghao): support other default channel
-                if (highUsed + initFileSize <= highCapacity) {
+                if (highStat.getUsed() + initFileSize <= highStat.getCapacity()) {
                     this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
                     this.mode = Mode.PMEM;
-                    highUsed += initFileSize;
+                    highStat.addUsed(initFileSize);
                 } else {
-                    log.info(defaultMode + " used (" + (highUsed + initFileSize) + " Bytes) exceeds limit (" + highCapacity
+                    log.info(defaultMode + " used (" + (highStat.getUsed() + initFileSize) + " Bytes) exceeds limit (" + highStat.getCapacity()
                             + " Bytes). Using normal FileChannel instead.");
                     this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
                     this.mode = Mode.HDD;
@@ -227,12 +256,62 @@ public class MixChannel extends FileChannel {
         return this.mode;
     }
 
-    public Mode setMode(Mode m) throws IOException {
-        // if no change, just return
-        if (this.mode == m) {
-            return m;
-        }
+    public void setMode(Mode m) throws IOException {
+        if (this.mode != m) {
+            FileChannel newChannel = migrate(m);
+            FileChannel oldChannel = getChannel();
+            Mode oldMode = getMode();
 
+            synchronized (this.lock) {
+                /*
+                 * there may be a case, where another thread is deleting this channel, acquired the lock
+                 * after delete, we have to abort the transform and delete any related resources
+                 */
+                if (deleted) {
+                    if (m == Mode.HDD) {
+                        Files.deleteIfExists(path);
+                    } else if (m == Mode.PMEM) {
+                        ((PMemChannel) newChannel).delete();
+                    } else {
+                        log.error("Not support channel " + mode);
+                    }
+                }
+
+                this.channels[m.value] = newChannel;
+                // until this point, the newChannel will take effect
+                this.mode = m;
+                metaStore.putInt(relativePath, this.mode.value);
+
+                /*
+                 * the concurrency risk is the case there are other readers are reading the data
+                 * writers are not possible as we only change the mode for Channels that are stable (old segments)
+                 * Our strategy: we wait until all the onging tasks complete
+                 */
+                while (readCount.get() != 0) { }
+                while (writeCount.get() != 0) { }
+                switch (oldMode) {
+                    case PMEM:
+                        ((PMemChannel) oldChannel).delete(false);
+                        break;
+                    case HDD:
+                        RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
+                        randomAccessFile.setLength(0);
+                        break;
+                    default:
+                        log.error("Not support " + oldMode);
+                }
+                this.channels[oldMode.value] = null;
+            }
+
+            synchronized (GLOBAL_LOCK) {
+                if (oldMode.higherThan(this.mode)) {
+                    highStat.minusUsed(this.occupiedSize());
+                }
+            }
+        }
+    }
+
+    private FileChannel migrate(Mode m) throws IOException {
         /*
          * if it crash in the middle, we have to clean the newly-allocated, but not-in-used PMem channels
          * For HDD FileChannel, it is ok, as the migration is deterministic,
@@ -251,62 +330,13 @@ public class MixChannel extends FileChannel {
         }
 
         FileChannel oldChannel = getChannel();
-        Mode oldMode = getMode();
         long size = oldChannel.size();
         long transferred = 0;
         do {
             transferred += oldChannel.transferTo(transferred, size, newChannel);
         } while (transferred < size);
 
-        synchronized (this.lock) {
-            /*
-             * there may be a case, where another thread is deleting this channel, acquired the lock
-             * after delete, we have to abort the transform and delete any related resources
-             */
-            if (deleted) {
-                if (m == Mode.HDD) {
-                    Files.deleteIfExists(path);
-                } else if (m == Mode.PMEM) {
-                    ((PMemChannel) newChannel).delete();
-                } else {
-                    log.error("Not support channel " + mode);
-                }
-
-                return m;
-            }
-
-            this.channels[m.value] = newChannel;
-            // until this point, the newChannel will take effect
-            this.mode = m;
-            metaStore.putInt(relativePath, this.mode.value);
-
-            /*
-             * the concurrency risk is the case there are other readers are reading the data
-             * writers are not possible as we only change the mode for Channels that are stable (old segments)
-             * Our strategy: we wait until all the onging tasks complete
-             */
-            while (readCount.get() != 0);
-            while (writeCount.get() != 0);
-            switch (oldMode) {
-                case PMEM:
-                    ((PMemChannel) oldChannel).delete(false);
-                    break;
-                case HDD:
-                    RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
-                    randomAccessFile.setLength(0);
-                    break;
-                default:
-                    log.error("Not support " + oldMode);
-            }
-            this.channels[oldMode.value] = null;
-        }
-
-        synchronized (GLOBAL_LOCK) {
-            if (oldMode.higherThan(this.mode)) {
-                highUsed -= this.occupiedSize();
-            }
-        }
-        return this.mode;
+        return newChannel;
     }
 
     private FileChannel getChannel() {
@@ -490,23 +520,20 @@ public class MixChannel extends FileChannel {
 
     public void delete() throws IOException {
         synchronized (this.lock) {
-            for (int i = 0; i < Mode.LEN; i++) {
-                FileChannel channel = this.channels[i];
-                if (channel == null) {
-                    continue;
-                }
+            // remove from migrator
+            migrator.remove(this);
 
-                Mode cmode = Mode.fromInteger(i);
-                if (cmode == Mode.HDD) {
-                    Files.deleteIfExists(path);
-                } else if (cmode == Mode.PMEM) {
-                    ((PMemChannel) channel).delete();
-                } else {
-                    log.error("Not support channel " + cmode);
-                }
-
-                this.channels[i] = null;
+            FileChannel channel = getChannel();
+            if (mode == Mode.HDD) {
+                Files.deleteIfExists(path);
+            } else if (mode == Mode.PMEM) {
+                PMemChannel pChannel = (PMemChannel) channel;
+                pChannel.delete();
+                highStat.minusUsed(pChannel.occupiedSize());
+            } else {
+                log.error("Not support channel " + mode);
             }
+            this.channels = null;
 
             metaStore.del(relativePath);
             deleted = true;

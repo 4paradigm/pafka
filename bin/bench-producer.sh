@@ -9,7 +9,7 @@ num_records=16000000
 record_size=1024
 
 # max total throughput (request/s) for all clients
-throughput=300000
+throughput=16000000
 
 # broker address
 brokers=172.29.100.24:9094
@@ -37,11 +37,12 @@ throughput_per_thread=`echo "$throughput/$threads/${#hosts[@]}" | bc`
 count=0
 for host in ${hosts[@]}
 do
-  mkdir $host > /dev/null 2>&1
-  rm $host/*
+  logdir=producer-$host
+  mkdir $logdir > /dev/null 2>&1
+  rm $logdir/*
 for i in `seq 1 $threads`
 do
-  log=$host/th-$i.log
+  log=$logdir/th-$i.log
   ssh $host "cd $bin; JAVA_HOME=$java_home ./bin/kafka-producer-perf-test.sh --topic test-$count --num-records $records_per_thread  --record-size $record_size --producer.config config/producer.properties  --throughput $throughput_per_thread --producer-props bootstrap.servers=$brokers" > $log 2>&1 &
   pid=$!
   pids[$count]=$pid
@@ -63,10 +64,11 @@ do
   thr_unit='MB/sec'
   for host in ${hosts[@]}
   do
-    ssh $host "sudo bash -c 'echo 1 > /proc/sys/vm/drop_caches'"
+    # ssh $host "sudo bash -c 'echo 1 > /proc/sys/vm/drop_caches'"
+    logdir=producer-$host
     for i in `seq 1 $threads`
     do
-      log=$host/th-$i.log
+      log=$logdir/th-$i.log
       last_line=`tail -1 $log`
       if [[ $last_line == *"records sent"* ]]; then
         rec=`echo $last_line | cut -d ' ' -f 4`
@@ -82,7 +84,7 @@ do
   if [[ $total_rec = 0 ]]; then
     echo "No throughput record"
     if [[ $count -ge 5 ]]; then
-      echo "You may check the logs in ./${hosts[@]}"
+      echo "You may check the logs in ./producer-${hosts[@]}"
     fi
     sleep 2
     count=$((count+1))
@@ -110,9 +112,11 @@ if [[ $completed -lt $len ]]; then
   for host in ${hosts[@]}
   do
     remaining_pids=`ssh $host "jps | grep ProducerPerformance | cut -d ' ' -f1" | sed ':a;N;$!ba;s/\n/\t/g'`
-    echo "Kill all remaining ProducerPerformance @ $host: $remaining_pids"
-    ssh $host "kill $remaining_pids"
-    ssh $host "kill -9 $remaining_pids"
+    if [[ ! -z $remaining_pids ]]; then
+      echo "Kill all remaining ProducerPerformance @ $host: $remaining_pids"
+      ssh $host "kill $remaining_pids"
+      ssh $host "kill -9 $remaining_pids"
+    fi
   done
 fi
 

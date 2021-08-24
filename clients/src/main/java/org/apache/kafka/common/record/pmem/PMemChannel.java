@@ -23,8 +23,11 @@ import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -107,49 +110,17 @@ public class PMemChannel extends FileChannel {
         boolean isDir = file.exists() && file.isDirectory();
         String metaPath = null;
         if (isDir) {
-            metaPath =  pmemRootPathG + "/pool.meta";
+            metaPath = pmemRootPathG + "/pool.meta";
         } else {  // poolset file
             log.warn("pmemRootPath is a poolset file: " + pmemRootPathG);
-            metaPath =  getParentDir(getFirstDir(pmemRootPathG)) + "/pool.meta";
+            metaPath = getParentDir(getFirstDir(pmemRootPathG)) + "/pool.meta";
         }
 
         // entry number will be #poolBlock + #dynamicBlock (we assume its max is 1000)
         long metaPoolSize = (poolEntryCountG + 1000) * 1024L * 1024;
         metaStore = new PMemMetaStore(metaPath, metaPoolSize);
 
-        String poolInited = metaStore.get(POOL_INITED);
-        if (poolInited != null && !poolInited.isEmpty()) {
-            log.info("PMem Pool already inited.");
-        } else {
-            int poolEntryCount = (int) (size * poolRatio / blockSize);
-            log.info("Init pool: size = " + size + ", poolEntryCount = " + poolEntryCount
-                    + " (" + (poolRatio * 100) + "% of total size), poolEntry size = " + blockSize);
-            metaStore.putInt(POOL_ENTRY_SIZE, blockSize);
-            metaStore.putInt(POOL_ENTRY_COUNT, poolEntryCount);
-
-            if (poolEntryCount > 0) {
-                for (int i = 0; i < poolEntryCount; i++) {
-                    MemoryPool pool = null;
-                    String relativePoolPath = POOL_ENTRY_PREFIX + i;
-                    String poolPath = joinPath(pmemRootPathG, relativePoolPath);
-                    if (MemoryPool.exists(poolPath)) {
-                        pool = MemoryPool.openPool(poolPath);
-                        log.warn(poolPath + " already exists");
-                    } else {
-                        pool = MemoryPool.createPool(poolPath, blockSize);
-                    }
-                    // memset pool
-                    pool.setMemoryNT((byte) 0, 0, blockSize);
-                    metaStore.put(relativePoolPath, POOL_NOT_IN_USE);
-                    log.info("init pool entry " + i);
-                }
-            }
-
-            // init pool used to 0
-            metaStore.putInt(POOL_ENTRY_USED, 0);
-            metaStore.put(POOL_INITED, POOL_INITED);
-            log.info("init pmem " + pmemRootPathG + " done");
-        }
+        preallocateIfNeeded(path, size, blockSize, poolRatio);
 
         if (!initedG) {
             initedG = true;
@@ -215,6 +186,42 @@ public class PMemChannel extends FileChannel {
         }
     }
 
+    private static void preallocateIfNeeded(String path, long size, int blockSize, double poolRatio) {
+        String poolInited = metaStore.get(POOL_INITED);
+        if (poolInited != null && !poolInited.isEmpty()) {
+            log.info("PMem Pool already inited.");
+        } else {
+            int poolEntryCount = (int) (size * poolRatio / blockSize);
+            log.info("Init pool: size = " + size + ", poolEntryCount = " + poolEntryCount
+                    + " (" + (poolRatio * 100) + "% of total size), poolEntry size = " + blockSize);
+            metaStore.putInt(POOL_ENTRY_SIZE, blockSize);
+            metaStore.putInt(POOL_ENTRY_COUNT, poolEntryCount);
+
+            if (poolEntryCount > 0) {
+                for (int i = 0; i < poolEntryCount; i++) {
+                    MemoryPool pool = null;
+                    String relativePoolPath = POOL_ENTRY_PREFIX + i;
+                    String poolPath = joinPath(pmemRootPathG, relativePoolPath);
+                    if (MemoryPool.exists(poolPath)) {
+                        pool = MemoryPool.openPool(poolPath);
+                        log.warn(poolPath + " already exists");
+                    } else {
+                        pool = MemoryPool.createPool(poolPath, blockSize);
+                    }
+                    // memset pool
+                    pool.setMemoryNT((byte) 0, 0, blockSize);
+                    metaStore.put(relativePoolPath, POOL_NOT_IN_USE);
+                    log.info("init pool entry " + i);
+                }
+            }
+
+            // init pool used to 0
+            metaStore.putInt(POOL_ENTRY_USED, 0);
+            metaStore.put(POOL_INITED, POOL_INITED);
+            log.info("init pmem " + pmemRootPathG + " done");
+        }
+    }
+
     public static FileChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
         synchronized (GLOBAL_LOCK) {
             log.info("open PMemChannel " + file.toString() + " with size " + initFileSize);
@@ -261,7 +268,11 @@ public class PMemChannel extends FileChannel {
                     + ", counter = " + counterG.get() + ", poolEntryCount = " + poolEntryCountG);
             if (poolEntryCountG == 0 || !similarSize(initSize, poolEntrySizeG) || counterG.get() >= poolEntryCountG) {
                 File parentFile = new File(joinPath(pmemRootPathG, relativePath)).getParentFile();
-                parentFile.mkdirs();
+                if (!parentFile.exists()) {
+                    if (!parentFile.mkdirs()) {
+                        error("Create directory " + parentFile + " failed");
+                    }
+                }
 
                 mpRelativePath = relativePath;
                 String path = joinPath(pmemRootPathG, mpRelativePath);
@@ -269,7 +280,9 @@ public class PMemChannel extends FileChannel {
                 // This may be true if program crash immediately after we createPool, but before we put the info to metaStore
                 if (mpFile.exists()) {
                     warn(mpFile + " already exists. Delete it first ");
-                    mpFile.delete();
+                    if (!mpFile.delete()) {
+                        warn(mpFile + " delete failed");
+                    }
                 }
                 memoryPool = MemoryPool.createPool(path, initSize);
                 metaStore.put(relativePath, mpRelativePath);
@@ -557,7 +570,9 @@ public class PMemChannel extends FileChannel {
         String pmemPath = poolset;
         BufferedReader br = null;
         try {
-            br = new BufferedReader(new FileReader(poolset));
+            InputStream inputStream = new FileInputStream(poolset);
+            Reader fileReader = new InputStreamReader(inputStream, "UTF-8");
+            br = new BufferedReader(fileReader);
             String line = br.readLine();
             while (line != null) {
                 if (line.contains("/")) {
@@ -570,7 +585,9 @@ public class PMemChannel extends FileChannel {
             log.error("Read file " + poolset + " failed: " + e);
         } finally {
             try {
-                br.close();
+                if (br != null) {
+                    br.close();
+                }
             } catch (IOException e) {
                 log.error("Close file " + poolset + " failed: " + e);
             }
@@ -592,15 +609,16 @@ public class PMemChannel extends FileChannel {
     }
 
     private boolean similarSize(long size1, long size2) {
-        if (abs(size1 - size2) < 10L * 1024 * 1024) {
-            return true;
-        } else {
-            return false;
-        }
+        return abs(size1 - size2) < 10L * 1024 * 1024;
     }
 
     static String toRelativePath(Path file) {
-        return joinPath(file.getParent().getFileName().toString(), file.getFileName().toString());
+        Path parent = file.getParent();
+        parent = parent == null ? null : parent.getFileName();
+        String parentStr = parent == null ? "" : parent.toString();
+        Path fileName = file.getFileName();
+        String fileNameStr = fileName == null ? "" : fileName.toString();
+        return joinPath(parentStr, fileNameStr);
     }
 
     private MemoryPool memoryPool;

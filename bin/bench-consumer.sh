@@ -16,6 +16,9 @@ hosts=(localhost)
 # java home
 java_home=$JAVA_HOME
 
+# timeout in ms
+timeout=1000000
+
 # ************ end of configuration *****************
 
 base_dir=$(dirname $0)
@@ -32,12 +35,13 @@ rm $lockfile
 count=0
 for host in ${hosts[@]}
 do
-  mkdir $host > /dev/null 2>&1
-  rm $host/*
+  logdir=consumer-$host
+  mkdir $logdir > /dev/null 2>&1
+  rm $logdir/*
 for i in `seq 1 $threads`
 do
-  log=$host/th-$i.log
-  ssh $host "cd $bin; while [[ true ]]; do if [[ -f "$lockfile" ]]; then date; break; fi; sleep 1; done; JAVA_HOME=$java_home ./bin/kafka-consumer-perf-test.sh --topic test-$count --consumer.config config/consumer.properties --bootstrap-server $brokers --messages $records_per_thread --reporting-interval 500 --show-detailed-stats" > $log 2>&1 &
+  log=$logdir/th-$i.log
+  ssh $host "cd $bin; while [[ true ]]; do if [[ -f "$lockfile" ]]; then date; break; fi; sleep 1; done; JAVA_HOME=$java_home ./bin/kafka-consumer-perf-test.sh --topic test-$count --consumer.config config/consumer.properties --bootstrap-server $brokers --messages $records_per_thread --reporting-interval 500 --show-detailed-stats --timeout $timeout" > $log 2>&1 &
   pid=$!
   pids[$count]=$pid
   count=$((count+1))
@@ -63,10 +67,11 @@ do
   thr=0
   for host in ${hosts[@]}
   do
-    ssh $host "sudo bash -c 'echo 1 > /proc/sys/vm/drop_caches'"
+    # ssh $host "sudo bash -c 'echo 1 > /proc/sys/vm/drop_caches'"
+    logdir=consumer-$host
     for i in `seq 1 $threads`
     do
-      log=$host/th-$i.log
+      log=$logdir/th-$i.log
       last_line=`tail -1 $log`
       thr_unit="MB/s"
       if [[ $last_line == "2021"* ]]; then
@@ -85,7 +90,7 @@ do
   if [[ $total_rec = 0 ]]; then
     echo "No throughput record"
     if [[ $count -ge 5 ]]; then
-      echo "You may check the logs in ./${hosts[@]}"
+      echo "You may check the logs in ./consumer-${hosts[@]}"
     fi
     sleep 2
     count=$((count+1))
@@ -113,9 +118,11 @@ if [[ $completed -lt $len ]]; then
   for host in ${hosts[@]}
   do
     remaining_pids=`ssh $host "jps | grep ConsumerPerformance | cut -d ' ' -f1" | sed ':a;N;$!ba;s/\n/\t/g'`
-    echo "Kill all remaining ConsumerPerformance @ $host: $remaining_pids"
-    ssh $host "kill $remaining_pids"
-    ssh $host "kill -9 $remaining_pids"
+    if [[ ! -z $remaining_pids ]]; then
+      echo "Kill all remaining ConsumerPerformance @ $host: $remaining_pids"
+      ssh $host "kill $remaining_pids"
+      ssh $host "kill -9 $remaining_pids"
+    fi
   done
 fi
 

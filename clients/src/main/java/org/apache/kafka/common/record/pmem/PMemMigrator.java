@@ -46,7 +46,7 @@ public class PMemMigrator {
 
     private Map<String, Long> ns2Id = new HashMap<String, Long>();
 
-    class MigrateTask {
+    private static class MigrateTask {
         private MixChannel channel;
         private MixChannel.Mode mode;
 
@@ -66,7 +66,7 @@ public class PMemMigrator {
         }
     };
 
-    class Migrate implements Runnable {
+    private class Migrate implements Runnable {
         private volatile boolean stop = false;
         private String name = null;
 
@@ -96,7 +96,7 @@ public class PMemMigrator {
                     try {
                         Thread.sleep(5000);
                     } catch (InterruptedException e) {
-                        e.printStackTrace();
+                        log.error(name + " exception:", e);
                     }
                 }
             }
@@ -107,7 +107,7 @@ public class PMemMigrator {
         }
     };
 
-    class Scheduler implements Runnable {
+    private class Scheduler implements Runnable {
         private volatile boolean stop = false;
 
         @Override
@@ -116,13 +116,13 @@ public class PMemMigrator {
             try {
                 Thread.sleep(10000);
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                log.error("Sleep interrupt", e);
             }
 
             while (!stop) {
                 // check the threshold
                 synchronized (lock) {
-                    log.info("used: " + (used >> 20) + " MB, threshold: " + (((long)(capacity * threshold)) >> 20) +
+                    log.info("[Before Schedule] used: " + (used >> 20) + " MB, threshold: " + (((long) (capacity * threshold)) >> 20) +
                             " MB, limit: " + (capacity >> 20) + " MB");
                     if (used >= capacity * threshold) {
                         Iterator<MixChannel> it = channels.iterator();
@@ -154,11 +154,13 @@ public class PMemMigrator {
                             }
                         }
                     }
+                    log.info("[After Schedule] used: " + (used >> 20) + " MB, threshold: " + (((long) (capacity * threshold)) >> 20) +
+                            " MB, limit: " + (capacity >> 20) + " MB");
                 }
                 try {
                     Thread.sleep(10000);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    log.error("Sleep interrupt", e);
                 }
             }
         }
@@ -209,6 +211,7 @@ public class PMemMigrator {
      * This will only be called when Kafka shutting down (closing all the channels)
      * It is used to avoid to handle closed Channel during the shutting down period
      * Performance is not significant
+     * TOOD(zhanghao): optimize this code as delete Channel also call remove
      * @param channel
      */
     public void remove(MixChannel channel) {
