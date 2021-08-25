@@ -32,6 +32,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Date;
 
 import static org.apache.kafka.common.record.pmem.PMemChannel.toRelativePath;
 
@@ -105,8 +106,8 @@ public class MixChannel extends FileChannel {
         }
     };
 
-
     private static final Logger log = LoggerFactory.getLogger(MixChannel.class);
+    private static final String TIMESTAMP_FIELD = "_timestamp_";
     private static Mode defaultMode = Mode.PMEM;
     private static MetaStore metaStore = null;
     private static PMemMigrator migrator = null;
@@ -129,8 +130,9 @@ public class MixChannel extends FileChannel {
     /**
      * namespace is like topic in the context of Kafka
      */
-    private String namespace = null;
+    private String namespace;
     private long id = -1;
+    private Date timestamp;
 
     public static Mode getDefaultMode() {
         return defaultMode;
@@ -182,6 +184,14 @@ public class MixChannel extends FileChannel {
         int modeValue = metaStore.getInt(relativePath);
         if (modeValue != MetaStore.NOT_EXIST_INT) {
             this.mode = Mode.fromInteger(modeValue);
+            long epoch = metaStore.getLong(relativePath, TIMESTAMP_FIELD);
+            if (epoch != MetaStore.NOT_EXIST_LONG) {
+                this.timestamp = new Date(epoch);
+            } else {
+                log.error("timestamp not exists in metaStore for " + relativePath);
+                this.timestamp = new Date();
+            }
+
             switch (mode) {
                 case PMEM:
                     this.channels[Mode.PMEM.value] = PMemChannel.open(file, initFileSize, preallocate, mutable);
@@ -224,7 +234,10 @@ public class MixChannel extends FileChannel {
                 this.channels[Mode.HDD.value] = openFileChannel(file, initFileSize, preallocate, mutable);
                 this.mode = Mode.HDD;
             }
+
+            this.timestamp = new Date();
             metaStore.putInt(relativePath, this.mode.value);
+            metaStore.putLong(relativePath, TIMESTAMP_FIELD, this.timestamp.getTime());
         }
         log.info("Create MixChannel " + this.mode + ", path = " + file + ", initSize = "
                 + initFileSize + ", preallocate = " + preallocate + ", mutable = " + mutable);
@@ -238,9 +251,13 @@ public class MixChannel extends FileChannel {
         return this.id;
     }
 
+    public Date getTimestamp() {
+        return this.timestamp;
+    }
+
     @Override
     public String toString() {
-        return "MixChannel " + getNamespace() + "/" + getId();
+        return "MixChannel " + this.mode + " " + getNamespace() + "/" + getId();
     }
 
     public Status setStatus(Status s) {

@@ -18,7 +18,7 @@ package org.apache.kafka.common.record.pmem;
 
 public abstract class MetaStore {
     public final static int NOT_EXIST_INT = Integer.MIN_VALUE;
-    public final static long  NOT_EXIST_LONG = Long.MIN_VALUE;
+    public final static long NOT_EXIST_LONG = Long.MIN_VALUE;
 
     public void putInt(String key, int value) {
         put(key, Integer.toString(value));
@@ -32,23 +32,59 @@ public abstract class MetaStore {
         put(key, value);
     }
 
+    public void putInt(String key, String field, int value) {
+        put(key, field, Integer.toString(value));
+    }
+
+    public void putLong(String key, String field, long value) {
+        put(key, field, Long.toString(value));
+    }
+
+    public void putString(String key, String field, String value) {
+        put(key, field, value);
+    }
+
     public abstract void put(String key, String value);
+
+    public void put(String key, String field, String value) {
+        put(key + SEP + field, value);
+    }
 
     public int getInt(String key) {
         String value = get(key);
-        return value == null || value.isEmpty() ? NOT_EXIST_INT : Integer.parseInt(get(key));
+        return value == null || value.isEmpty() ? NOT_EXIST_INT : Integer.parseInt(value);
     }
 
     public long getLong(String key) {
         String value = get(key);
-        return value == null || value.isEmpty() ? NOT_EXIST_LONG : Long.parseLong(get(key));
+        return value == null || value.isEmpty() ? NOT_EXIST_LONG : Long.parseLong(value);
     }
 
     public String getString(String key) {
         return get(key);
     }
 
+    public int getInt(String key, String field) {
+        String value = get(key, field);
+        return value == null || value.isEmpty() ? NOT_EXIST_INT : Integer.parseInt(value);
+    }
+
+    public long getLong(String key, String field) {
+        String value = get(key, field);
+        return value == null || value.isEmpty() ? NOT_EXIST_LONG : Long.parseLong(value);
+    }
+
+    public String getString(String key, String field) {
+        return get(key, field);
+    }
+
     public abstract String get(String key);
 
+    public String get(String key, String field) {
+        return get(key + SEP + field);
+    }
+
     public abstract void del(String key);
+
+    private static final String SEP = "|";
 };

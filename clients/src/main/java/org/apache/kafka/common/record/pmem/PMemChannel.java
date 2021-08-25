@@ -173,10 +173,10 @@ public class PMemChannel extends FileChannel {
             }
 
             // remedy the crash case PMemChannel#2
-            if (blockPoolG.size() != counterG.get()) {
-                log.error("Stored used pool count not consistent with pool entry meta: " + counterG + " vs " + blockPoolG +
+            if (poolEntryCountG - blockPoolG.size() != counterG.get()) {
+                log.error("Stored used pool count not consistent with pool entry meta: " + counterG + " vs " + blockPoolG.size() +
                         ". Prioritize pool entry meta");
-                counterG.set(blockPoolG.size());
+                counterG.set(poolEntryCountG - blockPoolG.size());
             }
 
             log.info("init PMem pool with poolEntryCount = " + poolEntryCountG + ", used = "

@@ -21,13 +21,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
-import java.util.ListIterator;
+import java.util.TreeMap;
+import java.util.NavigableMap;
+import java.io.Serializable;
+
 
 public class PMemMigrator {
     private static final Logger log = LoggerFactory.getLogger(PMemMigrator.class);
@@ -39,12 +40,21 @@ public class PMemMigrator {
     private double threshold = 0;
     private volatile long used = 0;
     private Object lock = new Object();
-    private List<MixChannel> channels = new ArrayList<>();
+    private TreeMap<MixChannel, MixChannel> channels = new TreeMap<>(new HotComparator());
 
     private LinkedList<MigrateTask> highToLow = new LinkedList<>();
     private LinkedList<MigrateTask> lowToHigh = new LinkedList<>();
 
     private Map<String, Long> ns2Id = new HashMap<String, Long>();
+
+    private static class HotComparator implements Comparator<MixChannel>, Serializable {
+        @Override
+        public int compare(MixChannel c1, MixChannel c2) {
+            int before = c1.getTimestamp().compareTo(c2.getTimestamp());
+            int ns = c1.getNamespace().compareTo(c2.getNamespace());
+            return before == 0 ? (ns == 0 ? (int) (c1.getId() - c2.getId()) : ns) : before;
+        }
+    }
 
     private static class MigrateTask {
         private MixChannel channel;
@@ -125,9 +135,7 @@ public class PMemMigrator {
                     log.info("[Before Schedule] used: " + (used >> 20) + " MB, threshold: " + (((long) (capacity * threshold)) >> 20) +
                             " MB, limit: " + (capacity >> 20) + " MB");
                     if (used >= capacity * threshold) {
-                        Iterator<MixChannel> it = channels.iterator();
-                        while (it.hasNext()) {
-                            MixChannel ch = it.next();
+                        for (MixChannel ch : channels.values()) {
                             if (ch.getStatus() != MixChannel.Status.MIGRATION &&
                                     ch.getMode().higherThan(MixChannel.Mode.HDD) && channelDone(ch)) {
                                 addTask(ch, MixChannel.Mode.HDD, true);
@@ -140,9 +148,8 @@ public class PMemMigrator {
                         }
                     } else {
                         // TODO(zhanghao): optimize this iter code
-                        ListIterator<MixChannel> it = channels.listIterator(channels.size());
-                        while (it.hasPrevious()) {
-                            MixChannel ch = it.previous();
+                        NavigableMap<MixChannel, MixChannel> it = channels.descendingMap();
+                        for (MixChannel ch : it.values()) {
                             if (ch.getStatus() != MixChannel.Status.MIGRATION &&
                                     ch.getMode().equal(MixChannel.Mode.HDD) && channelDone(ch)) {
                                 if (used + ch.occupiedSize() <= capacity * threshold) {
@@ -168,6 +175,16 @@ public class PMemMigrator {
         public void stop() {
             stop = true;
         }
+
+        /**
+         * for debug purpose
+         * print all the recorded channel info
+         */
+        private void traverseAllChannels() {
+            for (MixChannel ch : channels.values()) {
+                log.info("Traverse channel: " + ch.toString() + ", " + ch.getTimestamp() + ", " + ch.getTimestamp().getTime());
+            }
+        }
     };
 
     public PMemMigrator(int threads, long capacity, double threshold) {
@@ -189,7 +206,7 @@ public class PMemMigrator {
         String ns = channel.getNamespace();
         long id = channel.getId();
         synchronized (lock) {
-            channels.add(channel);
+            channels.put(channel, channel);
             if (ns2Id.containsKey(ns)) {
                 long existingId = ns2Id.get(ns);
                 if (existingId >= id) {
@@ -211,7 +228,6 @@ public class PMemMigrator {
      * This will only be called when Kafka shutting down (closing all the channels)
      * It is used to avoid to handle closed Channel during the shutting down period
      * Performance is not significant
-     * TOOD(zhanghao): optimize this code as delete Channel also call remove
      * @param channel
      */
     public void remove(MixChannel channel) {
