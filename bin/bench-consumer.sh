@@ -19,6 +19,9 @@ java_home=$JAVA_HOME
 # timeout in ms
 timeout=1000000
 
+# wait for all clients
+wait_for_all=true
+
 # ************ end of configuration *****************
 
 base_dir=$(dirname $0)
@@ -28,6 +31,12 @@ echo "Pafka home: $bin"
 
 pids=()
 records_per_thread=`echo "$num_records/$threads/${#hosts[@]}" | bc`
+
+if [[ $wait_for_all = true ]]; then
+  com_count=`echo "$threads * ${#hosts[@]}" | bc`
+else
+  com_count=1
+fi
 
 lockfile=started.lock
 rm $lockfile
@@ -108,7 +117,7 @@ do
     fi
   done
 
-  if [[ $completed -ge 1 ]]; then
+  if [[ $completed -ge $com_count ]]; then
     echo "$completed Consumers Completed"
     break
   fi
@@ -120,8 +129,8 @@ if [[ $completed -lt $len ]]; then
     remaining_pids=`ssh $host "jps | grep ConsumerPerformance | cut -d ' ' -f1" | sed ':a;N;$!ba;s/\n/\t/g'`
     if [[ ! -z $remaining_pids ]]; then
       echo "Kill all remaining ConsumerPerformance @ $host: $remaining_pids"
-      ssh $host "kill $remaining_pids"
-      ssh $host "kill -9 $remaining_pids"
+      ssh $host "kill $remaining_pids" > /dev/null 2>&1
+      ssh $host "kill -9 $remaining_pids" > /dev/null 2>&1
     fi
   done
 fi

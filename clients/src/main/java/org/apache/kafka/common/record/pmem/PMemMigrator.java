@@ -29,7 +29,6 @@ import java.util.TreeMap;
 import java.util.NavigableMap;
 import java.io.Serializable;
 
-
 public class PMemMigrator {
     private static final Logger log = LoggerFactory.getLogger(PMemMigrator.class);
     private KafkaThread[] threadPool = null;
@@ -39,13 +38,14 @@ public class PMemMigrator {
     private long capacity = 0;
     private double threshold = 0;
     private volatile long used = 0;
+    private volatile long usedTotal = 0;
     private Object lock = new Object();
     private TreeMap<MixChannel, MixChannel> channels = new TreeMap<>(new HotComparator());
 
     private LinkedList<MigrateTask> highToLow = new LinkedList<>();
     private LinkedList<MigrateTask> lowToHigh = new LinkedList<>();
 
-    private Map<String, Long> ns2Id = new HashMap<String, Long>();
+    private Map<String, Long> ns2Id = new HashMap<>();
 
     private static class HotComparator implements Comparator<MixChannel>, Serializable {
         @Override
@@ -132,8 +132,8 @@ public class PMemMigrator {
             while (!stop) {
                 // check the threshold
                 synchronized (lock) {
-                    log.info("[Before Schedule] used: " + (used >> 20) + " MB, threshold: " + (((long) (capacity * threshold)) >> 20) +
-                            " MB, limit: " + (capacity >> 20) + " MB");
+                    log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold)) >> 20) +
+                            " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
                     if (used >= capacity * threshold) {
                         for (MixChannel ch : channels.values()) {
                             if (ch.getStatus() != MixChannel.Status.MIGRATION &&
@@ -161,8 +161,8 @@ public class PMemMigrator {
                             }
                         }
                     }
-                    log.info("[After Schedule] used: " + (used >> 20) + " MB, threshold: " + (((long) (capacity * threshold)) >> 20) +
-                            " MB, limit: " + (capacity >> 20) + " MB");
+                    log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold)) >> 20) +
+                            " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
                 }
                 try {
                     Thread.sleep(10000);
@@ -221,17 +221,20 @@ public class PMemMigrator {
             if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
                 used += channel.occupiedSize();
             }
+            usedTotal += channel.occupiedSize();
         }
     }
 
     /**
-     * This will only be called when Kafka shutting down (closing all the channels)
-     * It is used to avoid to handle closed Channel during the shutting down period
-     * Performance is not significant
      * @param channel
      */
     public void remove(MixChannel channel) {
         synchronized (lock) {
+            if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
+                used -= channel.occupiedSize();
+            }
+            usedTotal -= channel.occupiedSize();
+
             channels.remove(channel);
         }
     }

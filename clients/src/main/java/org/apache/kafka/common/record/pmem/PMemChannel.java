@@ -412,7 +412,7 @@ public class PMemChannel extends FileChannel {
 
     @Override
     public void force(boolean metaData) {
-        this.memoryPool.flush(0, this.channelSize);
+        // no need to call flush as pmem_memcpy already do flush for us
     }
 
     @Override
