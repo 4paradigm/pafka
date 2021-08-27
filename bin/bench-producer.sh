@@ -3,7 +3,8 @@
 # ************ configuration *****************
 # total records to produce for all clients
 # estimated disk usage = $num_records * $record_size
-num_records=16000000
+# ~500 GB pmem usage
+num_records=500000000
 
 # size per record
 record_size=1024
@@ -15,10 +16,10 @@ throughput=16000000
 brokers=172.29.100.24:9094
 
 # number of threads per host
-threads=4
+threads=16
 
 # all hosts as client machines
-hosts=(localhost)
+hosts=(node-1 node-4)
 
 # java home
 java_home=$JAVA_HOME
@@ -49,15 +50,21 @@ do
   logdir=producer-$host
   mkdir $logdir > /dev/null 2>&1
   rm $logdir/*
-for i in `seq 1 $threads`
-do
-  log=$logdir/th-$i.log
-  ssh $host "cd $bin; JAVA_HOME=$java_home ./bin/kafka-producer-perf-test.sh --topic test-$count --num-records $records_per_thread  --record-size $record_size --producer.config config/producer.properties  --throughput $throughput_per_thread --producer-props bootstrap.servers=$brokers" > $log 2>&1 &
-  pid=$!
-  pids[$count]=$pid
-  count=$((count+1))
-  sleep 0.1
-done
+
+  cmdprefix=''
+  # if [[ $host = localhost ]]; then
+  #   cmdprefix=numactl_n1
+  # fi
+
+  for i in `seq 1 $threads`
+  do
+    log=$logdir/th-$i.log
+    ssh $host "cd $bin; JAVA_HOME=$java_home $cmdprefix ./bin/kafka-producer-perf-test.sh --topic test-$count --num-records $records_per_thread  --record-size $record_size --producer.config config/producer.properties  --throughput $throughput_per_thread --producer-props bootstrap.servers=$brokers" > $log 2>&1 &
+    pid=$!
+    pids[$count]=$pid
+    count=$((count+1))
+    sleep 0.1
+  done
 done
 
 len=${#pids[*]}
@@ -70,6 +77,12 @@ while [ True ];
 do
   total_rec=0
   total_thr=0
+  rec=0
+  thr=0
+  total_avg_lat=0
+  total_max_lat=0
+  total_aggr_records=0
+
   thr_unit='MB/sec'
   for host in ${hosts[@]}
   do
@@ -84,8 +97,15 @@ do
         thr=`echo $last_line | cut -d ' ' -f 6 | cut -d '(' -f2`
         thr_unit=`echo $last_line | cut -d ' ' -f 7 | cut -d ')' -f1`
 
+        avg_lat=`echo $last_line | cut -d ',' -f 5 | cut -d ' ' -f2`
+        max_lat=`echo $last_line | cut -d ',' -f 6 | cut -d ' ' -f2`
+        aggr_records=`echo $last_line | cut -d ' ' -f 1`
+
         total_rec=`echo "$rec + $total_rec" | bc`
         total_thr=`echo "$thr + $total_thr" | bc`
+        total_avg_lat=`echo "$total_avg_lat + $avg_lat * $aggr_records" | bc`
+        total_max_lat=`echo "$total_max_lat $max_lat" | tr ' ' '\n' | sort -nr | tr '\n' ' ' | cut -d ' ' -f1`
+        total_aggr_records=`echo "$total_aggr_records + $aggr_records" | bc`
       fi
     done
   done
@@ -98,7 +118,8 @@ do
     sleep 2
     count=$((count+1))
   else
-    echo "Aggregated Throughput: $total_rec records/sec ($total_thr $thr_unit)"
+    total_avg_lat=`echo "scale=2; $total_avg_lat / $total_aggr_records" | bc`
+    echo "Aggregated Performance: $total_rec records/sec ($total_thr $thr_unit), $total_avg_lat  ms avg latency, $total_max_lat ms max latency"
     sleep 1
   fi
 
@@ -106,10 +127,13 @@ do
   for (( i = 0; i < len; i++ ))
   do
     if ! kill -s 0 ${pids[$i]} > /dev/null 2>&1; then
-      echo "Producer No. $i completed"
       completed=$((completed+1))
     fi
   done
+
+  if [[ $completed -gt 0 ]]; then
+    echo "$completed Producers completed"
+  fi
 
   if [[ $completed -ge $com_count ]]; then
     echo "$completed Producers Completed"
