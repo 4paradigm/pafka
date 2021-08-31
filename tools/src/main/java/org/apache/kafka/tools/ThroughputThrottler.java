@@ -41,9 +41,9 @@ public class ThroughputThrottler {
     private static final long NS_PER_SEC = 1000 * NS_PER_MS;
     private static final long MIN_SLEEP_NS = 2 * NS_PER_MS;
 
-    private final long startMs;
-    private final long sleepTimeNs;
-    private final long targetThroughput;
+    private long startMs;
+    private long sleepTimeNs;
+    private long targetThroughput;
 
     private long sleepDeficitNs = 0;
     private boolean wakeup = false;
@@ -58,6 +58,20 @@ public class ThroughputThrottler {
         this.sleepTimeNs = targetThroughput > 0 ?
                            NS_PER_SEC / targetThroughput :
                            Long.MAX_VALUE;
+    }
+
+    public void setTarget(long throughput, long startMs) {
+        this.startMs = startMs;
+        this.targetThroughput = throughput;
+        this.sleepTimeNs = throughput > 0 ?
+                NS_PER_SEC / throughput :
+                Long.MAX_VALUE;
+
+        this.sleepDeficitNs = 0;
+    }
+
+    public long getTarget() {
+        return this.targetThroughput;
     }
 
     /**

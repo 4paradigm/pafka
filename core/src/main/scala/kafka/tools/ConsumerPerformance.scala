@@ -33,6 +33,7 @@ import org.apache.kafka.common.{Metric, MetricName, TopicPartition}
 
 import scala.jdk.CollectionConverters._
 import scala.collection.mutable
+import scala.Console
 
 /**
  * Performance test for the full zookeeper consumer
@@ -183,6 +184,7 @@ object ConsumerPerformance extends LazyLogging {
     val mbPerSec = 1000.0 * bytesRead / elapsedMs / (1024.0 * 1024.0)
     val messagesPerSec = (messagesRead  / elapsedMs) * 1000.0
     println("%d records received, %.2f records/sec (%.2f MB/sec), %.2f ms avg latency, %.2f ms max latency".format(messagesRead, messagesPerSec, mbPerSec, totalLatency / messagesRead.toDouble, maxLatency.toDouble))
+    Console.flush()
   }
 
   def printConsumerProgress(id: Int,

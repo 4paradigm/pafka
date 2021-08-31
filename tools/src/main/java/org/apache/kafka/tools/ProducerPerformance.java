@@ -19,6 +19,9 @@ package org.apache.kafka.tools;
 import static net.sourceforge.argparse4j.impl.Arguments.store;
 import static net.sourceforge.argparse4j.impl.Arguments.storeTrue;
 
+import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,6 +63,7 @@ public class ProducerPerformance {
             String producerConfig = res.getString("producerConfigFile");
             String payloadFilePath = res.getString("payloadFile");
             String transactionalId = res.getString("transactionalId");
+            Integer reportingInterval = res.getInt("reportingInterval");
             boolean shouldPrintMetrics = res.getBoolean("printMetrics");
             long transactionDurationMs = res.getLong("transactionDurationMs");
             boolean transactionsEnabled =  0 < transactionDurationMs;
@@ -119,13 +123,22 @@ public class ProducerPerformance {
                     payload[i] = (byte) (random.nextInt(26) + 65);
             }
             ProducerRecord<byte[], byte[]> record;
-            Stats stats = new Stats(numRecords, 5000);
+            Stats stats = new Stats(numRecords, reportingInterval);
             long startMs = System.currentTimeMillis();
 
             ThroughputThrottler throttler = new ThroughputThrottler(throughput, startMs);
+            String throttlerPath = System.getenv("PRODUCER_THROTTLER_CONFIG");
+            MappedByteBuffer throttlerConfig = null;
+            if (throttlerPath != null) {
+                RandomAccessFile rd = new RandomAccessFile(throttlerPath, "r");
+                FileChannel fc = rd.getChannel();
+                throttlerConfig = fc.map(FileChannel.MapMode.READ_ONLY, 0, 8);
+                System.out.println("Use dynamic throttler @" + throttlerPath);
+            }
 
             int currentTransactionSize = 0;
             long transactionStartTime = 0;
+            long sentSoFar = 0;
             for (long i = 0; i < numRecords; i++) {
                 if (transactionsEnabled && currentTransactionSize == 0) {
                     producer.beginTransaction();
@@ -148,9 +161,20 @@ public class ProducerPerformance {
                     currentTransactionSize = 0;
                 }
 
-                if (throttler.shouldThrottle(i, sendStartMs)) {
+                if (throttlerConfig != null) {
+                    long throughputLimit = throttlerConfig.getLong();
+                    if (throughputLimit != 0 && throughputLimit != throttler.getTarget()) {
+                        throttler.setTarget(throughputLimit, sendStartMs);
+                        sentSoFar = 0;
+                    }
+                    throttlerConfig.rewind();
+                }
+
+                if (throttler.shouldThrottle(sentSoFar, sendStartMs)) {
                     throttler.throttle();
                 }
+
+                sentSoFar++;
             }
 
             if (transactionsEnabled && currentTransactionSize != 0)
@@ -248,6 +272,15 @@ public class ProducerPerformance {
                 .type(Integer.class)
                 .metavar("THROUGHPUT")
                 .help("throttle maximum message throughput to *approximately* THROUGHPUT messages/sec. Set this to -1 to disable throttling.");
+
+        parser.addArgument("--reporting-interval")
+                .action(store())
+                .required(false)
+                .type(Integer.class)
+                .dest("reportingInterval")
+                .setDefault(1000)
+                .metavar("REPORTING-INTERVAL")
+                .help("reporting interval in ms");
 
         parser.addArgument("--producer-props")
                  .nargs("+")
@@ -367,6 +400,7 @@ public class ProducerPerformance {
                               (double) windowMaxLatency,
                               totalLatency / (double) count,
                               (double) maxLatency);
+            System.out.flush();
         }
 
         public void newWindow() {
@@ -392,6 +426,7 @@ public class ProducerPerformance {
                               percs[1],
                               percs[2],
                               percs[3]);
+            System.out.flush();
         }
 
         private static int[] percentiles(int[] latencies, int count, double... percentiles) {
