@@ -16,20 +16,26 @@
  */
 package org.apache.kafka.common.record;
 
+import org.apache.kafka.common.record.pmem.MixChannel;
 import org.apache.kafka.common.record.pmem.PMemChannel;
+import org.apache.kafka.common.utils.Utils;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import static org.apache.kafka.test.TestUtils.tempDirectory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.File;
 import java.io.IOException;
 
-import static org.apache.kafka.test.TestUtils.tempFile;
-
 public class FileRecordsPMemTest extends FileRecordsTest {
+    private static String pmemDir = "/tmp/pmem-FileRecordsPMemTest";
+    private static final long SIZE = 1024L * 1024 * 1024 * 10;
+    private static final int INIT_SIZE = 10 * 1024 * 1024;
 
-    @Override
-    protected FileRecords createFileRecords(byte[][] values) throws IOException {
-        String pmemDir = "/tmp/pmem";
+    @BeforeAll
+    public static void init() {
         File directory = new File(pmemDir);
         if (directory.exists()) {
             String[] entries = directory.list();
@@ -41,12 +47,21 @@ public class FileRecordsPMemTest extends FileRecordsTest {
         }
         directory.mkdirs();
 
-        String path = pmemDir + "/heap";
-        long size = 1024L * 1024 * 1024 * 10;
-        int initSize = 10 * 1024 * 1024;
-        PMemChannel.init(path, size, initSize, 0.9);
+        String path = pmemDir;
+        PMemChannel.init(path, SIZE, INIT_SIZE, 0.9);
+        MixChannel.init(path, SIZE, 0.9, 1);
+    }
 
-        FileRecords fileRecords = FileRecords.open(tempFile(), true, false, initSize, true, FileRecords.FileChannelType.PMEM);
+    @AfterAll
+    public static void cleanData() throws IOException {
+        Utils.delete(new File(pmemDir));
+    }
+
+    @Override
+    protected FileRecords createFileRecords(byte[][] values) throws IOException {
+        File parent = tempDirectory();
+        String filePath = parent.getPath() + "/" + "00001.log";
+        FileRecords fileRecords = FileRecords.open(new File(filePath), true, false, INIT_SIZE, true, FileRecords.FileChannelType.PMEM);
         return fileRecords;
     }
 

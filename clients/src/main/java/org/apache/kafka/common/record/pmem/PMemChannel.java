@@ -182,7 +182,7 @@ public class PMemChannel extends FileChannel {
             log.info("init PMem pool with poolEntryCount = " + poolEntryCountG + ", used = "
                     + counterG.get() + ", poolEntrySize = " + poolEntrySizeG);
         } else {
-            log.error("pool already inited");
+            log.warn("pool already inited");
         }
     }
 
@@ -320,10 +320,10 @@ public class PMemChannel extends FileChannel {
     }
 
     @Override
-    public int read(ByteBuffer dst) throws UnsupportedOperationException {
-        String msg = "read(ByteBuffer dst) not implemented";
-        error(msg);
-        throw new UnsupportedOperationException(msg);
+    public int read(ByteBuffer dst) throws IOException {
+        int ret = read(dst, channelPosition);
+        channelPosition += ret;
+        return ret;
     }
 
     @Override
@@ -341,7 +341,6 @@ public class PMemChannel extends FileChannel {
         }
 
         int requiredSize = writeSize + channelPosition;
-
         if (requiredSize > channelSize) {
             if (requiredSize <= memoryPool.size()) {
                 channelSize = (int) memoryPool.size();

@@ -29,6 +29,8 @@ import java.nio.charset.StandardCharsets;
 
 public class PMemMetaStore extends MetaStore {
     public PMemMetaStore(String path, long size) {
+        super(path);
+
         // TODO(zhanghao): config.properties is required by pmdk pcj. For now we generate dynamically here
         try {
             BufferedWriter metaConfig = new BufferedWriter(new OutputStreamWriter(

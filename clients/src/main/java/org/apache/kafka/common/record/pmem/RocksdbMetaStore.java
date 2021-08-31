@@ -37,6 +37,8 @@ public class RocksdbMetaStore extends MetaStore {
     }
 
     public RocksdbMetaStore(String path) {
+        super(path);
+
         loadLib();
 
         // the Options class contains a set of configurable DB options

@@ -20,6 +20,16 @@ public abstract class MetaStore {
     public final static int NOT_EXIST_INT = Integer.MIN_VALUE;
     public final static long NOT_EXIST_LONG = Long.MIN_VALUE;
 
+    private String path;
+
+    public MetaStore(String path) {
+        this.path = path;
+    }
+
+    public String getPath() {
+        return this.path;
+    }
+
     public void putInt(String key, int value) {
         put(key, Integer.toString(value));
     }

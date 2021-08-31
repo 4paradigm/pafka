@@ -37,13 +37,13 @@ import java.util.Date;
 import static org.apache.kafka.common.record.pmem.PMemChannel.toRelativePath;
 
 public class MixChannel extends FileChannel {
-    enum Mode {
+    public enum Mode {
         PMEM(0),
         NVME(1),
         SSD(2),
         HDD(3);
 
-        public int value;
+        public final int value;
         public static final int LEN = Mode.values().length;
         private Mode(int value) {
             this.value = value;
@@ -72,7 +72,7 @@ public class MixChannel extends FileChannel {
         }
     };
 
-    enum Status {
+    public enum Status {
         INIT,
         MIGRATION;
     };
@@ -158,6 +158,10 @@ public class MixChannel extends FileChannel {
         if (migrator != null) {
             migrator.stop();
         }
+    }
+
+    public static MetaStore getMetaStore() {
+        return metaStore;
     }
 
     public static MixChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
@@ -575,6 +579,12 @@ public class MixChannel extends FileChannel {
                 return FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.READ,
                         StandardOpenOption.WRITE);
             } else {
+                Path parent = file.getParent();
+                if (parent != null && !parent.toFile().exists()) {
+                    if (!parent.toFile().mkdirs()) {
+                        log.error("Create directory " + parent + " failed");
+                    }
+                }
                 RandomAccessFile randomAccessFile = new RandomAccessFile(file.toString(), "rw");
                 randomAccessFile.setLength(initFileSize);
                 return randomAccessFile.getChannel();
