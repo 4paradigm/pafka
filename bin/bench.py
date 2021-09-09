@@ -8,6 +8,9 @@ import mmap
 import threading
 from datetime import datetime
 import csv
+import random
+
+out_f = None
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("--type", help="producer/consumer", type=str, default="producer")
@@ -15,7 +18,7 @@ arg_parser.add_argument("--timeout", help="timeout for consumer in ms", type=int
 arg_parser.add_argument("--num_records", help="num of records", type=int, default=5000000)
 arg_parser.add_argument("--record_size", help="record size (for producer only)", type=int, default=1024)
 arg_parser.add_argument("--throughput", help="throughput (for producer only)", type=int, default=12000000)
-arg_parser.add_argument("--dynamic", help="dynamic throughput (for producer only): min:max:avg", type=str, default="100000:500000:10000000")
+arg_parser.add_argument("--dynamic", help="dynamic throughput (for producer only): min:max:avg", type=str, default="100000:500000:8000000")
 arg_parser.add_argument("--use_dynamic", help="use dynamic throughput control", action="store_true", default=False)
 arg_parser.add_argument("--brokers", help="broker list", type=str, default="172.29.100.24:9094")
 arg_parser.add_argument("--threads", help="threads per host", type=int, default=16)
@@ -28,6 +31,7 @@ arg_parser.add_argument("--output_file", help="result output file", type=str, de
 arg_parser.add_argument("--sleept", help="min sleep time for every step (dynamic throughput)", type=int, default=10)
 arg_parser.add_argument("--steps", help="total steps (dynamic throughput)", type=int, default=5)
 arg_parser.add_argument("--control_type", help="control type: sleep; step", type=str, default="sleep")
+arg_parser.add_argument("--only_min_max", help="only use the min and max throughut (dynamic throughput)", action="store_true", default=False)
 
 start_timestamp = 0
 
@@ -36,7 +40,8 @@ def execute_cmd_realtime(cmd, shell=True):
         cmd, stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        shell=shell)
+        shell=shell,
+        bufsize=0)
 
     while True:
         out = child.stdout.readline()
@@ -70,7 +75,7 @@ def get_base_dir():
     return dir_path + "/.."
 
 
-def launch_clients(args):
+def launch_clients(args, later=10):
     print("launch {} clients for every host [{}]".format(args.threads, args.hosts))
     start = time.time()
     host_sep = " "
@@ -80,6 +85,7 @@ def launch_clients(args):
     records_per_thread = int(args.num_records / args.threads / len(hosts))
     throughput_per_thread = int(args.throughput / args.threads / len(hosts))
     outs = {}
+    start_ts=int(start + later)
     for host in hosts:
         host_cmdprefix = host.split("/")
         host = host_cmdprefix[0]
@@ -87,6 +93,8 @@ def launch_clients(args):
             cmdprefix = ""
         else:
             cmdprefix = host_cmdprefix[1]
+
+        cmdprefix = "BENCH_START_TS={} ".format(start_ts) + cmdprefix
 
         outs[host] = []
         for i in range(args.threads):
@@ -101,6 +109,7 @@ def launch_clients(args):
 
     end = time.time()
     print("launch clients in {} seconds".format(end - start))
+    time.sleep(later)
     return outs
 
 
@@ -144,19 +153,27 @@ def parse_producer(line):
     max_lat = 0
     aggr_records = 0
 
+    throughput_limit = 0
     if "records sent" in line and "99th" not in line:
         toks = line.split(",")
-        rec_per_s = float(toks[1].strip().split(" ")[0])
-        thr_a_unit = toks[1].strip().split("(")[1].strip().split(" ")
-        thr_per_s = float(thr_a_unit[0])
-        thr_unit = thr_a_unit[1].strip(')')
+        try:
+            rec_per_s = float(toks[1].strip().split(" ")[0])
+            thr_a_unit = toks[1].strip().split("(")[1].strip().split(" ")
+            thr_per_s = float(thr_a_unit[0])
+            thr_unit = thr_a_unit[1].strip(')')
 
-        avg_lat = float(toks[4].strip().split(" ")[0])
-        max_lat = float(toks[5].strip().split(" ")[0])
+            avg_lat = float(toks[4].strip().split(" ")[0])
+            max_lat = float(toks[5].strip().split(" ")[0])
+            if len(toks) >= 7:
+                throughput_limit = int(toks[6].strip().split(" ")[0])
 
-        aggr_records = int(toks[0].strip().split(" ")[0])
+            aggr_records = int(toks[0].strip().split(" ")[0])
+        except ValueError:
+            print("ValueError error: {}".format(line))
+        except:
+            print("Parse Error: {}".format(line))
 
-    return rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records
+    return rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records, throughput_limit
 
 
 def parse_consumer(line):
@@ -184,7 +201,7 @@ def parse_consumer(line):
 
 
 class Throttler (threading.Thread):
-    def __init__(self, hosts: list, threads: int, dynamic_thr: str, sleept=10, steps=5, control_type="sleep", name="Throttler"):
+    def __init__(self, hosts: list, threads: int, dynamic_thr: str, sleept=10, steps=5, control_type="sleep", name="Throttler", only_min_max=False):
         threading.Thread.__init__(self)
         self.name = name
         toks = dynamic_thr.split(":")
@@ -198,39 +215,79 @@ class Throttler (threading.Thread):
         self.steps = steps
         self.control_type = control_type
         self.stopped = False
+        self.only_min_max = only_min_max
 
     def run(self):
         print("Starting " + self.name)
         factor = float(self.max_thr + self.avg_thr) / (self.avg_thr + self.min_thr)
+        run_steps = []
 
-        if self.control_type == "step":
-            steps_high = self.steps
-            steps_low = int(self.steps * factor)
+        if self.only_min_max:
+            run_steps = [self.min_thr, self.max_thr]
+            factor = float(self.max_thr - self.avg_thr) / (self.avg_thr - self.min_thr)
+            sleep_low = factor * self.sleept
             sleep_high = self.sleept
-            sleep_low = self.sleept
-            print("steps in range [{} {}]: {}, steps in range [{} {}]: {}".format(self.min_thr, self.avg_thr, steps_low, self.avg_thr, self.max_thr, steps_high))
         else:
-            steps_high = self.steps
-            steps_low = self.steps
-            sleep_high = self.sleept
-            sleep_low = self.sleept * factor
-            print("sleep time in range [{} {}]: {}, sleep time in range [{} {}]: {}".format(self.min_thr, self.avg_thr, self.sleept * factor, self.avg_thr, self.max_thr, self.sleept))
+            if self.control_type == "step":
+                steps_high = self.steps
+                steps_low = int(self.steps * factor)
+                sleep_high = self.sleept
+                sleep_low = self.sleept
+                print("steps in range [{} {}]: {}, steps in range [{} {}]: {}".format(self.min_thr, self.avg_thr, steps_low, self.avg_thr, self.max_thr, steps_high))
+            else:
+                steps_high = self.steps
+                steps_low = self.steps
+                sleep_high = self.sleept
+                sleep_low = self.sleept * factor
+                print("sleep time in range [{} {}]: {}, sleep time in range [{} {}]: {}".format(self.min_thr, self.avg_thr, self.sleept * factor, self.avg_thr, self.max_thr, self.sleept))
 
-        unit_high = int((self.max_thr - self.avg_thr) / steps_high)
-        unit_low = int((self.avg_thr - self.min_thr) / steps_low)
+            unit_high = int((self.max_thr - self.avg_thr) / steps_high)
+            unit_low = int((self.avg_thr - self.min_thr) / steps_low)
+
+            thr = self.min_thr
+            run_steps.append(thr)
+            while thr < self.max_thr:
+                if thr < self.avg_thr:
+                    thr += unit_low
+                else:
+                    thr += unit_high
+
+                run_steps.append(thr)
+
+            shuffled_run_steps = []
+            sj = 0
+            si = len(run_steps) - 1
+            for i in range(steps_high):
+                shuffled_run_steps.append(run_steps[si])
+                for j in range(int(steps_low / steps_high)):
+                    shuffled_run_steps.append(run_steps[sj])
+                    sj += 1
+
+                si -= 1
+
+            for i in run_steps:
+                if i not in shuffled_run_steps:
+                    shuffled_run_steps.append(i)
+
+            # print("Run steps: {}".format(run_steps))
+            # print("shuffled_steps: {}".format(shuffled_run_steps))
+            assert(len(shuffled_run_steps) == len(run_steps))
+            assert(sorted(shuffled_run_steps) == sorted(run_steps))
+            # run_steps = shuffled_run_steps
+
+            # random.shuffle(run_steps)
+
+        print("Run steps: {}".format(run_steps))
 
         control_clients(self.hosts, self.threads, self.min_thr)
         time.sleep(10)
 
         count = 0
         while not self.stopped:
-            thr = self.min_thr
-            while thr < self.max_thr:
+            for thr in run_steps:
                 if thr < self.avg_thr:
-                    thr += unit_low
                     sleep_curr = sleep_low
                 else:
-                    thr += unit_high
                     sleep_curr = sleep_high
 
                 control_clients(self.hosts, self.threads, thr)
@@ -242,7 +299,7 @@ class Throttler (threading.Thread):
         self.stopped = True
 
 
-def print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, res_count, typ="producer", writer=None):
+def print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, res_count, total_throughput_limit, typ="producer", writer=None):
     curr_timestamp = int(time.time())
     global start_timestamp
     if start_timestamp == 0:
@@ -252,13 +309,13 @@ def print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg
 
     printable_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     if typ == "producer":
-        print("[%s][%d] %d records sent, %.2f records/sec (%.2f %s), %.2f ms avg latency, %.2f ms max latency (aggregated from %d clients)" % (printable_time, rel_timestamp, cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, res_count))
+        print("[%s][%d] %d records sent, %.2f records/sec (%.2f %s), %.2f ms avg latency, %.2f ms max latency, %d records/sec max (aggregated from %d clients)" % (printable_time, rel_timestamp, cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, total_throughput_limit, res_count), flush=True)
     elif typ == "consumer":
-        print("[%s][%d] %d records received, %.2f records/sec (%.2f %s), %.2f ms avg latency, %.2f ms max latency (aggregated from %d clients)" % (printable_time, rel_timestamp, cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, res_count))
+        print("[%s][%d] %d records received, %.2f records/sec (%.2f %s), %.2f ms avg latency, %.2f ms max latency (aggregated from %d clients)" % (printable_time, rel_timestamp, cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat, total_max_lat, res_count), flush=True)
 
     if writer is not None:
         writer.writerow([printable_time, curr_timestamp, rel_timestamp, cum_records, "%.2f" % total_rec_per_s, "%.2f" % total_thr_per_s, "%.2f" % total_avg_lat, "%.2f" % total_max_lat])
-
+        out_f.flush()
 
 
 if __name__ == "__main__":
@@ -274,7 +331,8 @@ if __name__ == "__main__":
 
     if args.use_dynamic and args.type == "producer":
         control_clients(hosts=hosts, threads=threads, init=True)
-        throttler = Throttler(hosts=hosts, threads=threads, dynamic_thr=args.dynamic, sleept=args.sleept, steps=args.steps, control_type=args.control_type)
+        throttler = Throttler(hosts=hosts, threads=threads, dynamic_thr=args.dynamic, sleept=args.sleept, steps=args.steps, control_type=args.control_type, only_min_max=args.only_min_max)
+        throttler.daemon = True
         throttler.start()
 
     # launch all the clients
@@ -283,8 +341,8 @@ if __name__ == "__main__":
 
     out_writer = None
     if args.output_file is not None and len(args.output_file) > 0:
-        f = open(args.output_file, "w+", encoding="UTF8")
-        out_writer = csv.writer(f)
+        out_f = open(args.output_file, "w+", encoding="UTF8")
+        out_writer = csv.writer(out_f)
 
     while True:
         completed = 0
@@ -296,6 +354,8 @@ if __name__ == "__main__":
         total_avg_lat = 0
         total_max_lat = 0
         total_aggr_records = 0
+        throughput_limit = 0
+        total_throughput_limit = 0
 
         res_count = 0
         for host, outs_per_host in outs.items():
@@ -303,7 +363,8 @@ if __name__ == "__main__":
                 try:
                     line = next(out)
                     if args.type == "producer":
-                        rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records = parse_producer(line)
+                        rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records, throughput_limit = parse_producer(line)
+                        total_throughput_limit += throughput_limit
                     else:
                         rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records = parse_consumer(line)
 
@@ -313,6 +374,7 @@ if __name__ == "__main__":
                     total_avg_lat = total_avg_lat + avg_lat * aggr_records
                     total_max_lat = max(total_max_lat, max_lat)
                     total_aggr_records = total_aggr_records + aggr_records
+                    # print("{}:{} {}".format(host, res_count, throughput_limit))
                     # print("{}:{} {}".format(host, res_count, line))
                     # print(rec_per_s, thr_per_s, thr_unit, avg_lat, max_lat, aggr_records, total_rec_per_s, total_thr_per_s, total_avg_lat / total_aggr_records, total_max_lat, total_aggr_records)
                 except StopIteration:
@@ -322,7 +384,7 @@ if __name__ == "__main__":
                         break
                     elif not args.wait_for_all:
                         print("{} clients completed. Kill the {} other clients".format(completed, (total_clients - completed)))
-                        kill_clients(hosts, name=args.type)
+                        kill_clients(hosts, typ=args.type)
                         break
             else:
                 continue
@@ -336,7 +398,7 @@ if __name__ == "__main__":
                 else:
                     cum_records = total_aggr_records
 
-                print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat / total_aggr_records, total_max_lat, res_count, typ=args.type, writer=out_writer)
+                print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat / total_aggr_records, total_max_lat, res_count, total_throughput_limit, typ=args.type, writer=out_writer)
             continue
 
 
@@ -346,9 +408,9 @@ if __name__ == "__main__":
             else:
                 cum_records = total_aggr_records
 
-            print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat / total_aggr_records, total_max_lat, res_count, typ=args.type, writer=out_writer)
+            print_res(cum_records, total_rec_per_s, total_thr_per_s, thr_unit, total_avg_lat / total_aggr_records, total_max_lat, res_count, total_throughput_limit, typ=args.type, writer=out_writer)
         break
 
     if args.use_dynamic and args.type == "producer":
         throttler.stop()
-        throttler.join()
+        # throttler.join()

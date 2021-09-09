@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.NavigableMap;
 import java.io.Serializable;
+import java.util.ArrayList;
 
 public class PMemMigrator {
     private static final Logger log = LoggerFactory.getLogger(PMemMigrator.class);
@@ -36,11 +37,22 @@ public class PMemMigrator {
     private Scheduler schedule = null;
 
     private long capacity = 0;
-    private double threshold = 0;
-    private volatile long used = 0;
-    private volatile long usedTotal = 0;
-    private Object lock = new Object();
+    /**
+     * above threadhold1, start migrate from PMEM to HDD from the tail
+     */
+    private double threshold1 = 0;
+    /**
+     * below threshold2, start migrate from HDD to PMEM from the head
+     */
+    private double threshold2 = 0.8;
+    MixChannel lastEvicted;
+
+    private volatile long usedG = 0;
+    private volatile long usedTotalG = 0;
+    private Object channelsLock = new Object();
+    private Object statslLock = new Object();
     private TreeMap<MixChannel, MixChannel> channels = new TreeMap<>(new HotComparator());
+    private ArrayList<MixChannel> tmpChannels = new ArrayList<>();
 
     private LinkedList<MigrateTask> highToLow = new LinkedList<>();
     private LinkedList<MigrateTask> lowToHigh = new LinkedList<>();
@@ -65,8 +77,8 @@ public class PMemMigrator {
             this.mode = mode;
         }
 
-        public void run() {
-            log.info("Running task: migrating " + channel.toString() + " to " + mode);
+        public void run(Runnable runner) {
+            log.info("[" + runner.toString() + "] Running task: migrating " + channel.toString() + " to " + mode);
             try {
                 this.channel.setMode(this.mode);
                 this.channel.setStatus(MixChannel.Status.INIT);
@@ -85,10 +97,15 @@ public class PMemMigrator {
         }
 
         @Override
+        public String toString() {
+            return name;
+        }
+
+        @Override
         public void run() {
             while (!stop) {
                 MigrateTask task = null;
-                synchronized (lock) {
+                synchronized (channelsLock) {
                     if (highToLow.size() > 0) {
                         task = highToLow.pop();
                     }
@@ -101,7 +118,7 @@ public class PMemMigrator {
                 }
 
                 if (task != null) {
-                    task.run();
+                    task.run(this);
                 } else {
                     try {
                         Thread.sleep(5000);
@@ -121,6 +138,7 @@ public class PMemMigrator {
         private volatile boolean stop = false;
 
         @Override
+        @SuppressWarnings("unchecked")
         public void run() {
             // wait for the existing channels initialization phase to complete
             try {
@@ -130,40 +148,39 @@ public class PMemMigrator {
             }
 
             while (!stop) {
-                // check the threshold
-                synchronized (lock) {
-                    log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold)) >> 20) +
-                            " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
-                    if (used >= capacity * threshold) {
-                        for (MixChannel ch : channels.values()) {
-                            if (ch.getStatus() != MixChannel.Status.MIGRATION &&
-                                    ch.getMode().higherThan(MixChannel.Mode.HDD) && channelDone(ch)) {
-                                addTask(ch, MixChannel.Mode.HDD, true);
-                                used -= ch.occupiedSize();
-                            }
+                // copy channel from tmpChannels
+                ArrayList<MixChannel> clonedChannels = null;
+                long used = 0;
+                long usedTotal = 0;
+                synchronized (statslLock) {
+                    used = usedG;
+                    usedTotal = usedTotalG;
+                    clonedChannels = (ArrayList) tmpChannels.clone();
+                    tmpChannels.clear();
+                }
 
-                            if (used <= capacity * threshold) {
-                                break;
-                            }
-                        }
-                    } else {
-                        // TODO(zhanghao): optimize this iter code
-                        NavigableMap<MixChannel, MixChannel> it = channels.descendingMap();
-                        for (MixChannel ch : it.values()) {
-                            if (ch.getStatus() != MixChannel.Status.MIGRATION &&
-                                    ch.getMode().equal(MixChannel.Mode.HDD) && channelDone(ch)) {
-                                if (used + ch.occupiedSize() <= capacity * threshold) {
-                                    addTask(ch, MixChannel.getDefaultMode(), false);
-                                    used += ch.occupiedSize();
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
+                // check the threshold
+                synchronized (channelsLock) {
+                    for (MixChannel ch : clonedChannels) {
+                        channels.put(ch, ch);
                     }
-                    log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold)) >> 20) +
+
+                    log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold1)) >> 20) +
+                            " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
+                    if (used >= capacity * threshold1) {
+                        used = checkHighToLow(used);
+                    } else {
+                        used = checkLowToHigh(used);
+                    }
+                    log.info("[After Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold1)) >> 20) +
                             " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
                 }
+
+                synchronized (statslLock) {
+                    usedG = used;
+                    usedTotalG = usedTotal;
+                }
+
                 try {
                     Thread.sleep(10000);
                 } catch (InterruptedException e) {
@@ -189,7 +206,9 @@ public class PMemMigrator {
 
     public PMemMigrator(int threads, long capacity, double threshold) {
         this.capacity = capacity;
-        this.threshold = threshold;
+        this.threshold1 = threshold;
+        // FIXME(zhanghao): remove
+        this.threshold2 = threshold;
         threadPool = new KafkaThread[threads + 1];
         migrates = new Migrate[threads];
         for (int i = 0; i < threads; i++) {
@@ -205,8 +224,8 @@ public class PMemMigrator {
     public void add(MixChannel channel) {
         String ns = channel.getNamespace();
         long id = channel.getId();
-        synchronized (lock) {
-            channels.put(channel, channel);
+        synchronized (statslLock) {
+            tmpChannels.add(channel);
             if (ns2Id.containsKey(ns)) {
                 long existingId = ns2Id.get(ns);
                 if (existingId >= id) {
@@ -219,9 +238,9 @@ public class PMemMigrator {
             }
 
             if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
-                used += channel.occupiedSize();
+                usedG += channel.occupiedSize();
             }
-            usedTotal += channel.occupiedSize();
+            usedTotalG += channel.occupiedSize();
         }
     }
 
@@ -229,13 +248,15 @@ public class PMemMigrator {
      * @param channel
      */
     public void remove(MixChannel channel) {
-        synchronized (lock) {
-            if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
-                used -= channel.occupiedSize();
-            }
-            usedTotal -= channel.occupiedSize();
-
+        synchronized (channelsLock) {
             channels.remove(channel);
+        }
+
+        synchronized (statslLock) {
+            if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
+                usedG -= channel.occupiedSize();
+            }
+            usedTotalG -= channel.occupiedSize();
         }
     }
 
@@ -259,6 +280,53 @@ public class PMemMigrator {
         for (int i = 0; i < this.threadPool.length; i++) {
             threadPool[i].join();
         }
+    }
+
+    private long checkHighToLow(long used) {
+        boolean stillLow = true;
+        for (MixChannel ch : channels.values()) {
+            MixChannel.Mode m = ch.getMode();
+
+            if (ch.getStatus() != MixChannel.Status.MIGRATION &&
+                    m.higherThan(MixChannel.Mode.HDD) && channelDone(ch)) {
+                addTask(ch, MixChannel.Mode.HDD, true);
+                used -= ch.occupiedSize();
+                lastEvicted = ch;
+            }
+
+            if (m == MixChannel.Mode.HDD && stillLow) {
+                lastEvicted = ch;
+            } else {
+                stillLow = false;
+            }
+
+            if (used <= capacity * threshold1) {
+                break;
+            }
+        }
+        return used;
+    }
+
+    private long checkLowToHigh(long used) {
+        // TODO(zhanghao): optimize this iter code
+        NavigableMap<MixChannel, MixChannel> it = channels.descendingMap();
+        for (MixChannel ch : it.values()) {
+            if (ch == lastEvicted) {
+                log.debug("traverse until lastEvicted");
+                break;
+            }
+
+            if (ch.getStatus() != MixChannel.Status.MIGRATION &&
+                    ch.getMode().equal(MixChannel.Mode.HDD) && channelDone(ch)) {
+                if (used + ch.occupiedSize() <= capacity * threshold2) {
+                    addTask(ch, MixChannel.getDefaultMode(), false);
+                    used += ch.occupiedSize();
+                } else {
+                    break;
+                }
+            }
+        }
+        return used;
     }
 
     private void addTask(MixChannel channel, MixChannel.Mode mode, boolean h2l) {

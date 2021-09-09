@@ -112,18 +112,20 @@ public class MixChannel extends FileChannel {
     private static MetaStore metaStore = null;
     private static PMemMigrator migrator = null;
     private final static Object GLOBAL_LOCK = new Object();
-    private static  Stat highStat = new Stat();
+    private static Stat highStat = new Stat();
+    private static String lowBasePath = null;
+
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
     private final Object lock = new Object();
-    private boolean deleted = false;
+    private volatile boolean deleted = false;
     private AtomicInteger readCount = new AtomicInteger(0);
     private AtomicInteger writeCount = new AtomicInteger(0);
 
     /**
      * use different location for different channels to avoid thread-risk issues
      */
-    private FileChannel[] channels = null;
+    private volatile FileChannel[] channels = null;
 
     private Path path = null;
     private String relativePath = null;
@@ -138,12 +140,27 @@ public class MixChannel extends FileChannel {
         return defaultMode;
     }
 
-    public static void init(String path, long capacity, double threshold, int migrateThreads) {
-        metaStore = new RocksdbMetaStore(path + "/.meta");
+    public static void init(String highPath, String lowPath, long capacity, double threshold, int migrateThreads) {
+        File highBaseFile = new File(highPath);
+        if (!highBaseFile.exists()) {
+            if (!highBaseFile.mkdirs()) {
+                log.error("Create directory " + highBaseFile + " failed");
+            }
+        }
+
+        File lowBaseFile = new File(lowPath);
+        if (!lowBaseFile.exists()) {
+            if (!lowBaseFile.mkdirs()) {
+                log.error("Create directory " + lowBaseFile + " failed");
+            }
+        }
+
+        metaStore = new RocksdbMetaStore(highPath + "/.meta");
+        lowBasePath = lowPath;
 
         // use all the storage space if capacity is configured to -1
         if (capacity == -1) {
-            File file = new File(path);
+            File file = new File(highPath);
             capacity = file.getTotalSpace();
         }
         highStat.setCapacity(capacity);
@@ -166,6 +183,7 @@ public class MixChannel extends FileChannel {
 
     public static MixChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
         MixChannel ch = null;
+        log.info("Creating MixChannel " + file.toString());
         synchronized (GLOBAL_LOCK) {
             ch = new MixChannel(file, initFileSize, preallocate, mutable);
         }
@@ -184,6 +202,9 @@ public class MixChannel extends FileChannel {
         this.id = Long.parseLong(toks[1].split("\\.")[0]);
 
         this.channels = new FileChannel[Mode.LEN];
+        for (int i = 0; i < Mode.LEN; i++) {
+            this.channels[i] = null;
+        }
 
         int modeValue = metaStore.getInt(relativePath);
         if (modeValue != MetaStore.NOT_EXIST_INT) {
@@ -279,55 +300,79 @@ public class MixChannel extends FileChannel {
 
     public void setMode(Mode m) throws IOException {
         if (this.mode != m) {
-            FileChannel newChannel = migrate(m);
+            if (deleted) {
+                return;
+            }
+
+            FileChannel newChannel = null;
+            try {
+                newChannel = migrate(m);
+            } catch (IOException e) {
+                if (deleted) {
+                    return;
+                } else {
+                    throw e;
+                }
+            }
             FileChannel oldChannel = getChannel();
             Mode oldMode = getMode();
-
-            synchronized (this.lock) {
-                /*
-                 * there may be a case, where another thread is deleting this channel, acquired the lock
-                 * after delete, we have to abort the transform and delete any related resources
-                 */
-                if (deleted) {
-                    if (m == Mode.HDD) {
-                        Files.deleteIfExists(path);
-                    } else if (m == Mode.PMEM) {
-                        ((PMemChannel) newChannel).delete();
-                    } else {
-                        log.error("Not support channel " + mode);
-                    }
-                }
-
-                this.channels[m.value] = newChannel;
-                // until this point, the newChannel will take effect
-                this.mode = m;
-                metaStore.putInt(relativePath, this.mode.value);
-
-                /*
-                 * the concurrency risk is the case there are other readers are reading the data
-                 * writers are not possible as we only change the mode for Channels that are stable (old segments)
-                 * Our strategy: we wait until all the onging tasks complete
-                 */
-                while (readCount.get() != 0) { }
-                while (writeCount.get() != 0) { }
-                switch (oldMode) {
-                    case PMEM:
-                        ((PMemChannel) oldChannel).delete(false);
-                        break;
-                    case HDD:
-                        RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
-                        randomAccessFile.setLength(0);
-                        break;
-                    default:
-                        log.error("Not support " + oldMode);
-                }
-                this.channels[oldMode.value] = null;
-            }
+            safeDeleteOld(m, newChannel, oldMode, oldChannel);
 
             synchronized (GLOBAL_LOCK) {
                 if (oldMode.higherThan(this.mode)) {
                     highStat.minusUsed(this.occupiedSize());
                 }
+            }
+        }
+    }
+
+    private void safeDeleteOld(Mode newMode, FileChannel newChannel, Mode oldMode, FileChannel oldChannel) throws IOException {
+        synchronized (this.lock) {
+            /*
+             * there may be a case, where another thread is deleting this channel, acquired the lock
+             * after delete, we have to abort the transform and delete any related resources
+             */
+            if (deleted) {
+                if (newMode == Mode.HDD) {
+                    deleteFileChannel(path);
+                } else if (newMode == Mode.PMEM) {
+                    ((PMemChannel) newChannel).delete();
+                } else {
+                    log.error("Not support channel " + mode);
+                }
+            }
+
+            this.channels[newMode.value] = newChannel;
+            // below is necessary to ensure elements in channels is volatile
+            // remove for now to pass findBug checking
+            // this.channels = this.channels;
+
+            // until this point, the newChannel will take effect
+            this.mode = newMode;
+            metaStore.putInt(relativePath, this.mode.value);
+
+            /*
+             * the concurrency risk is the case there are other readers are reading the data
+             * writers are not possible as we only change the mode for Channels that are stable (old segments)
+             * Our strategy: we wait until all the onging tasks complete
+             */
+            while (readCount.get() != 0) { }
+            while (writeCount.get() != 0) { }
+            this.channels[oldMode.value] = null;
+            switch (oldMode) {
+                case PMEM:
+                    ((PMemChannel) oldChannel).delete(false);
+                    break;
+                case HDD:
+                    if (path.startsWith(lowBasePath)) {
+                        RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
+                        randomAccessFile.setLength(0);
+                    } else {
+                        deleteFileChannel(path);
+                    }
+                    break;
+                default:
+                    log.error("Not support " + oldMode);
             }
         }
     }
@@ -353,10 +398,22 @@ public class MixChannel extends FileChannel {
         FileChannel oldChannel = getChannel();
         long size = oldChannel.size();
         long transferred = 0;
+        long batch = 1024L * 1024;
+        boolean aborted = false;
         do {
-            transferred += oldChannel.transferTo(transferred, size, newChannel);
+            if (deleted) {
+                log.warn(this + " was deleted. Abort migration");
+                aborted = true;
+                break;
+            }
+            batch = batch > size ? size : batch;
+            long t = oldChannel.transferTo(transferred, batch, newChannel);
+            transferred += t;
         } while (transferred < size);
 
+        if (!aborted && (size == 0 || size != newChannel.position())) {
+            log.error("[" + this + "]: migrated " + newChannel.position() + " (expected size = " + size + ")");
+        }
         return newChannel;
     }
 
@@ -456,6 +513,7 @@ public class MixChannel extends FileChannel {
 
     @Override
     public FileChannel truncate(long size) throws IOException {
+        log.info(relativePath + " was truncated to  " + size);
         writeCount.incrementAndGet();
         FileChannel ret = null;
         try {
@@ -540,29 +598,38 @@ public class MixChannel extends FileChannel {
     }
 
     public void delete() throws IOException {
-        synchronized (this.lock) {
-            // remove from migrator
-            migrator.remove(this);
+        deleted = true;
+        // remove from migrator
+        migrator.remove(this);
 
+        if (this.status == Status.MIGRATION) {
+            log.info("Delete " + path + " while migration in process");
+        }
+
+        synchronized (this.lock) {
             FileChannel channel = getChannel();
             if (mode == Mode.HDD) {
+                deleteFileChannel(path);
                 Files.deleteIfExists(path);
             } else if (mode == Mode.PMEM) {
                 PMemChannel pChannel = (PMemChannel) channel;
-                pChannel.delete();
                 highStat.minusUsed(pChannel.occupiedSize());
+                pChannel.delete();
             } else {
                 log.error("Not support channel " + mode);
             }
             this.channels = null;
 
             metaStore.del(relativePath);
-            deleted = true;
         }
     }
 
     @Override
     protected void implCloseChannel() throws IOException {
+        if (deleted) {
+            return;
+        }
+
         migrator.remove(this);
 
         for (FileChannel channel : this.channels) {
@@ -573,24 +640,45 @@ public class MixChannel extends FileChannel {
     }
 
     static private FileChannel openFileChannel(Path file, long initFileSize, boolean preallocate, boolean mutable) throws IOException {
+        String rPath = toRelativePath(file);
+        Path realPath = new File(lowBasePath + "/" + rPath).toPath();
+        FileChannel ch = null;
         if (mutable) {
-            boolean fileAlreadyExists = file.toFile().exists();
+            boolean fileAlreadyExists = realPath.toFile().exists();
             if (fileAlreadyExists || !preallocate) {
-                return FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.READ,
+                return FileChannel.open(realPath, StandardOpenOption.CREATE, StandardOpenOption.READ,
                         StandardOpenOption.WRITE);
             } else {
-                Path parent = file.getParent();
+                Path parent = realPath.getParent();
                 if (parent != null && !parent.toFile().exists()) {
                     if (!parent.toFile().mkdirs()) {
                         log.error("Create directory " + parent + " failed");
                     }
                 }
-                RandomAccessFile randomAccessFile = new RandomAccessFile(file.toString(), "rw");
+                RandomAccessFile randomAccessFile = new RandomAccessFile(realPath.toString(), "rw");
                 randomAccessFile.setLength(initFileSize);
-                return randomAccessFile.getChannel();
+                ch = randomAccessFile.getChannel();
             }
         } else {
-            return FileChannel.open(file);
+            ch = FileChannel.open(realPath);
         }
+
+        // create an empty log file as Kafka will check its existence
+        Path parent = file.getParent();
+        if (parent != null && !parent.toFile().mkdirs()) {
+            log.debug(file.getParent() + " already exists");
+        }
+
+        if (!file.toFile().createNewFile()) {
+            log.debug(file + " already exits");
+        }
+
+        return ch;
+    }
+
+    static private void deleteFileChannel(Path file) throws IOException {
+        String rPath = toRelativePath(file);
+        rPath = lowBasePath + "/" + rPath;
+        Files.deleteIfExists(new File(rPath).toPath());
     }
 }

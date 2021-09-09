@@ -37,6 +37,8 @@ public class MixChannelTest {
     private static MixChannel channelG;
     private static File channelPath;
     private static File parent;
+    private static String pmemPath;
+    private static String hddPath;
     private static String relativePathG;
     private static final long SIZE = 10L * 1024 * 1024;
     private static final int BLOCK_SIZE = 1024 * 1024;
@@ -44,10 +46,12 @@ public class MixChannelTest {
     @BeforeAll
     public static void setup() throws IOException {
         parent = tempDirectory();
-        channelPath = new File(parent.getPath() + "/topic-test/00001.log");
+        pmemPath = parent.toString() + "/pmem";
+        hddPath = parent.toString() + "/hdd";
+        channelPath = new File(hddPath + "/topic-test/00001.log");
         relativePathG = Paths.get(parent.getName(), channelPath.getName()).toString();
 
-        MixChannel.init(parent.toString(), SIZE, 0.9, 1);
+        MixChannel.init(pmemPath, hddPath, SIZE, 0.9, 1);
         channelG = new MixChannel(channelPath.toPath(), BLOCK_SIZE, true, true);
     }
 
@@ -97,7 +101,7 @@ public class MixChannelTest {
     public void testSetMode() throws IOException {
         String pmemPath = parent.toString() + "/pmem";
         PMemChannel.init(pmemPath, SIZE, BLOCK_SIZE, 0.01);
-        File file = new File(parent.getPath() + "/topic-test/00003.log");
+        File file = new File(hddPath + "/topic-test/00003.log");
         String relativePath = Paths.get(file.getParentFile().getName(), file.getName()).toString();
         MixChannel channel = new MixChannel(file.toPath(), BLOCK_SIZE, true, true);
 

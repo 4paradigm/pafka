@@ -225,10 +225,10 @@ public class FileRecords extends AbstractRecords implements Closeable {
      *          because it did not exist
      */
     public boolean deleteIfExists() throws IOException {
-        Utils.closeQuietly(channel, "FileChannel");
         if (channel instanceof MixChannel) {
             ((MixChannel) channel).delete();
         }
+        Utils.closeQuietly(channel, "FileChannel");
         return Files.deleteIfExists(file.toPath());
     }
 

@@ -107,7 +107,14 @@ public class PMemChannel extends FileChannel {
         pmemRootPathG = path;
         pSizeG = size;
         File file = new File(pmemRootPathG);
-        boolean isDir = file.exists() && file.isDirectory();
+        if (!file.exists()) {
+            if (!file.mkdirs()) {
+                log.error("Mkdir " + file + " failed");
+                return;
+            }
+        }
+
+        boolean isDir = file.isDirectory();
         String metaPath = null;
         if (isDir) {
             metaPath = pmemRootPathG + "/pool.meta";
@@ -223,8 +230,8 @@ public class PMemChannel extends FileChannel {
     }
 
     public static FileChannel open(Path file, int initFileSize, boolean preallocate, boolean mutable) throws IOException {
+        log.info("Creating PMemChannel " + file.toString() + " with size " + initFileSize);
         synchronized (GLOBAL_LOCK) {
-            log.info("open PMemChannel " + file.toString() + " with size " + initFileSize);
             FileChannel channel = new PMemChannel(file, initFileSize, preallocate);
             return channel;
         }
@@ -322,7 +329,9 @@ public class PMemChannel extends FileChannel {
     @Override
     public int read(ByteBuffer dst) throws IOException {
         int ret = read(dst, channelPosition);
-        channelPosition += ret;
+        synchronized (rwLock) {
+            channelPosition += ret;
+        }
         return ret;
     }
 
@@ -340,24 +349,26 @@ public class PMemChannel extends FileChannel {
             return writeSize;
         }
 
-        int requiredSize = writeSize + channelPosition;
-        if (requiredSize > channelSize) {
-            if (requiredSize <= memoryPool.size()) {
-                channelSize = (int) memoryPool.size();
-            } else {
-                // This condition shouldn't happen as segment size is fixed and should not exceed the configured segment size
-                error("requiredSize " + requiredSize + " > buf limit " + memoryPool.size());
-                return 0;
+        synchronized (rwLock) {
+            int requiredSize = writeSize + channelPosition;
+            if (requiredSize > channelSize) {
+                if (requiredSize <= memoryPool.size()) {
+                    channelSize = (int) memoryPool.size();
+                } else {
+                    // This condition shouldn't happen as segment size is fixed and should not exceed the configured segment size
+                    error("requiredSize " + requiredSize + " > buf limit " + memoryPool.size());
+                    return 0;
+                }
             }
-        }
 
-        debug("write " + writeSize + " to buf from position " + channelPosition + ", size = " + size() + ", src.limit() = "
-                + src.limit() + ", src.position = " + src.position() + ", src.capacity() = " + src.capacity()
-                + ", src.arrayOffset() = " + src.arrayOffset());
-        memoryPool.copyFromByteArrayNT(src.array(), src.arrayOffset() + src.position(), channelPosition, writeSize);
-        // _buf.flush(_position, writeSize);
-        src.position(src.position() + writeSize);
-        channelPosition += writeSize;
+            debug("write " + writeSize + " to buf from position " + channelPosition + ", size = " + size() + ", src.limit() = "
+                    + src.limit() + ", src.position = " + src.position() + ", src.capacity() = " + src.capacity()
+                    + ", src.arrayOffset() = " + src.arrayOffset());
+            memoryPool.copyFromByteArrayNT(src.array(), src.arrayOffset() + src.position(), channelPosition, writeSize);
+            // _buf.flush(_position, writeSize);
+            src.position(src.position() + writeSize);
+            channelPosition += writeSize;
+        }
         debug("After write, final position = " + channelPosition);
         return writeSize;
     }
@@ -378,7 +389,9 @@ public class PMemChannel extends FileChannel {
     @Override
     public FileChannel position(long newPosition) throws IOException {
         debug("new position = " + newPosition + ", old position = " + channelPosition);
-        channelPosition = (int) newPosition;
+        synchronized (rwLock) {
+            channelPosition = (int) newPosition;
+        }
         return this;
     }
 
@@ -394,19 +407,21 @@ public class PMemChannel extends FileChannel {
     @Override
     public FileChannel truncate(long size) throws IOException {
         info("PMemChannel truncate from " + this.channelSize + " to " + size);
-        if (size <= memoryPool.size()) {
-            this.channelSize = (int) size;
-            position(min(position(), this.channelSize));
-
-            synchronized (GLOBAL_LOCK) {
-                metaStore.putInt(sizeKey, this.channelSize);
+        synchronized (rwLock) {
+            if (size <= memoryPool.size()) {
+                this.channelSize = (int) size;
+                position(min(position(), this.channelSize));
+            } else {
+                String msg = "PMemChannel does not support truncate to larger size";
+                error(msg);
+                throw new IOException(msg);
             }
-            return this;
-        } else {
-            String msg = "PMemChannel does not support truncate to larger size";
-            error(msg);
-            throw new IOException(msg);
         }
+
+        synchronized (GLOBAL_LOCK) {
+            metaStore.putInt(sizeKey, this.channelSize);
+        }
+        return this;
     }
 
     @Override
@@ -416,14 +431,25 @@ public class PMemChannel extends FileChannel {
 
     @Override
     public long transferTo(long position, long count, WritableByteChannel target) throws IOException {
-        int transferSize = min(channelSize - (int) position, (int) count);
-        debug("transferTo @" + position + " with length " + count + ":" + transferSize);
-        ByteBuffer transferBuf = memoryPool.asByteBuffer(position, (int) count);
         int n = 0;
-        while (n < transferSize) {
-            n += target.write(transferBuf);
+        ByteBuffer transferBuf = null;
+        synchronized (rwLock) {
+            int transferSize = min(channelSize - (int) position, (int) count);
+            debug("transferTo @" + position + " with length " + count + " (required) :" + transferSize + " (available)");
+
+            if (transferSize > 0) {
+                try {
+                    transferBuf = memoryPool.asByteBuffer(position, transferSize);
+                } catch (IllegalAccessException e) {
+                    log.error(concatPath("asByteBuffer error: "), e);
+                }
+                while (n < transferSize) {
+                    n += target.write(transferBuf);
+                }
+            }
         }
         debug("write " + n + " bytes");
+        transferBuf = null;
         return n;
     }
 
@@ -437,13 +463,16 @@ public class PMemChannel extends FileChannel {
     @Override
     public int read(ByteBuffer dst, long position) throws IOException {
         debug("dst.remaining() = " + dst.remaining() + ", size = " + channelSize + ", position = " + position + ", curPos = " + this.channelPosition);
-        int readSize = min(channelSize - (int) position, dst.remaining());
-        if (readSize <= 0)  {
-            return -1;
-        }
+        int readSize = 0;
+        synchronized (rwLock) {
+            readSize = min(channelSize - (int) position, dst.remaining());
+            if (readSize <= 0) {
+                return -1;
+            }
 
-        memoryPool.copyToByteArray(position, dst.array(), dst.arrayOffset() + dst.position(), readSize);
-        dst.position(dst.position() + readSize);
+            memoryPool.copyToByteArray(position, dst.array(), dst.arrayOffset() + dst.position(), readSize);
+            dst.position(dst.position() + readSize);
+        }
         debug("read " + readSize + " from position " + position);
         return readSize;
     }
@@ -486,52 +515,58 @@ public class PMemChannel extends FileChannel {
     }
 
     public void delete(boolean deleteOrigFile) {
+        boolean inPool = mpRelativePath.startsWith(POOL_ENTRY_PREFIX);
+        int usedCounter = counterG.get();
+        info("Before delete PMemChannel, channelSize = " + memoryPool.size() + ", free poolEntryCount = "
+                + blockPoolG.size() + ", usedCounter = " + usedCounter);
+
         synchronized (GLOBAL_LOCK) {
-            info("Before delete PMemChannel, channelSize = " + memoryPool.size() + ", poolEntryCount = "
-                    + blockPoolG.size() + ", usedCounter = " + counterG.get());
             // crash case PMemChannel#3
             // if we call metaStore.del(relativePath) directly
             // after which, program crash, we may lose one PMemChannel
             // so we put a DELETE_FLAG first so that we can recover if this crash case happen
             metaStore.put(relativePath, DELETED_FLAG);
 
-            if (mpRelativePath.startsWith(POOL_ENTRY_PREFIX)) {
+            if (inPool) {
                 // clear the pmem metadata
                 metaStore.put(mpRelativePath, POOL_NOT_IN_USE);
 
                 // push back to pool
                 blockPoolG.push(new Pair<>(mpRelativePath, memoryPool));
-                int usedCounter = counterG.decrementAndGet();
+                usedCounter = counterG.decrementAndGet();
+
                 metaStore.putInt(POOL_ENTRY_USED, usedCounter);
 
                 if (poolEntryCountG - usedCounter != blockPoolG.size()) {
                     error("pool free size (" + blockPoolG.size() + ") != poolEntryCount - usedCounter ("
                             + (poolEntryCountG - usedCounter) + ")");
                 }
-            } else {
-                Path p1 = Paths.get(pmemRootPathG, mpRelativePath);
-                info("Delete file " + p1.toString());
-                try {
-                    Files.deleteIfExists(p1);
-                } catch (IOException e) {
-                    error("delete file " + p1 + " error: " + e);
-                }
-                if (deleteOrigFile) {
-                    Path p2 = filePath;
-                    info("Delete file " + p2.toString());
-                    try {
-                        Files.deleteIfExists(p2);
-                    } catch (IOException e) {
-                        error("delete file " + p2 + " error: " + e);
-                    }
-                }
             }
             metaStore.del(relativePath);
             metaStore.removeInt(sizeKey);
+            info("Return " + mpRelativePath + " back to the pool");
+        }
+        info("After delete PMemChannel, channelSize = " + memoryPool.size() +
+                ", free poolEntryCount = " + blockPoolG.size() + ", usedCounter = " + usedCounter);
+        memoryPool = null;
 
-            info("After delete PMemChannel, channelSize = " + memoryPool.size() +
-                    ", poolEntryCount = " + blockPoolG.size() + ", usedCounter = " + counterG.get());
-            memoryPool = null;
+        if (!inPool) {
+            Path p1 = Paths.get(pmemRootPathG, mpRelativePath);
+            info("Delete file " + p1.toString());
+            try {
+                Files.deleteIfExists(p1);
+            } catch (IOException e) {
+                error("delete file " + p1 + " error: ", e);
+            }
+            if (deleteOrigFile) {
+                Path p2 = filePath;
+                info("Delete file " + p2.toString());
+                try {
+                    Files.deleteIfExists(p2);
+                } catch (IOException e) {
+                    error("delete file " + p2 + " error: ", e);
+                }
+            }
         }
     }
 
@@ -553,6 +588,10 @@ public class PMemChannel extends FileChannel {
 
     private void error(String str) {
         log.error(concatPath(str));
+    }
+
+    private void error(String str, Exception e) {
+        log.error(concatPath(str), e);
     }
 
     /**
@@ -581,14 +620,14 @@ public class PMemChannel extends FileChannel {
                 line = br.readLine();
             }
         } catch (Exception e) {
-            log.error("Read file " + poolset + " failed: " + e);
+            log.error("Read file " + poolset + " failed: ", e);
         } finally {
             try {
                 if (br != null) {
                     br.close();
                 }
             } catch (IOException e) {
-                log.error("Close file " + poolset + " failed: " + e);
+                log.error("Close file " + poolset + " failed: ", e);
             }
         }
 
@@ -627,4 +666,5 @@ public class PMemChannel extends FileChannel {
     private Path filePath;
     private String relativePath;
     private String sizeKey;
+    private final Object rwLock = new Object();
 }

@@ -31,30 +31,33 @@ import java.io.IOException;
 
 public class FileRecordsPMemTest extends FileRecordsTest {
     private static String pmemDir = "/tmp/pmem-FileRecordsPMemTest";
+    private static String hddDir = "/tmp/hdd-FileRecordsPMemTest";
     private static final long SIZE = 1024L * 1024 * 1024 * 10;
     private static final int INIT_SIZE = 10 * 1024 * 1024;
 
     @BeforeAll
-    public static void init() {
+    public static void init() throws IOException {
         File directory = new File(pmemDir);
         if (directory.exists()) {
-            String[] entries = directory.list();
-            for (String s : entries) {
-                File currentFile = new File(directory.getPath(), s);
-                currentFile.delete();
-            }
-            directory.delete();
+            Utils.delete(directory);
+        }
+        directory.mkdirs();
+
+        directory = new File(hddDir);
+        if (directory.exists()) {
+            Utils.delete(directory);
         }
         directory.mkdirs();
 
         String path = pmemDir;
         PMemChannel.init(path, SIZE, INIT_SIZE, 0.9);
-        MixChannel.init(path, SIZE, 0.9, 1);
+        MixChannel.init(path, hddDir, SIZE, 0.9, 1);
     }
 
     @AfterAll
     public static void cleanData() throws IOException {
         Utils.delete(new File(pmemDir));
+        Utils.delete(new File(hddDir));
     }
 
     @Override

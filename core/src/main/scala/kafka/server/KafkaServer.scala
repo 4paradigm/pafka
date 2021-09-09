@@ -198,7 +198,7 @@ class KafkaServer(
           val migrateThreads = config.migrateThreads.intValue()
 
           PMemChannel.init(path, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
-          MixChannel.init(path, size, migrateThreshold, migrateThreads)
+          MixChannel.init(path, "/tmp/kafka", size, migrateThreshold, migrateThreads)
         }
 
         /* setup zookeeper */

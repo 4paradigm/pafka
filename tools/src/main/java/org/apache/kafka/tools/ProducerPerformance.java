@@ -47,6 +47,7 @@ import org.apache.kafka.common.utils.Exit;
 import org.apache.kafka.common.utils.Utils;
 
 public class ProducerPerformance {
+    static long throughputLimitG = 0;
 
     public static void main(String[] args) throws Exception {
         ArgumentParser parser = argParser();
@@ -134,6 +135,9 @@ public class ProducerPerformance {
                 FileChannel fc = rd.getChannel();
                 throttlerConfig = fc.map(FileChannel.MapMode.READ_ONLY, 0, 8);
                 System.out.println("Use dynamic throttler @" + throttlerPath);
+            } else {
+                throughputLimitG = throttler.getTarget();
+                System.out.println("Producer with throughput limit: " + throughputLimitG);
             }
 
             int currentTransactionSize = 0;
@@ -163,11 +167,14 @@ public class ProducerPerformance {
 
                 if (throttlerConfig != null) {
                     long throughputLimit = throttlerConfig.getLong();
+                    throughputLimitG = throughputLimit;
                     if (throughputLimit != 0 && throughputLimit != throttler.getTarget()) {
                         throttler.setTarget(throughputLimit, sendStartMs);
                         sentSoFar = 0;
                     }
                     throttlerConfig.rewind();
+                } else {
+                    throughputLimitG = throttler.getTarget();
                 }
 
                 if (throttler.shouldThrottle(sentSoFar, sendStartMs)) {
@@ -392,14 +399,14 @@ public class ProducerPerformance {
             long elapsed = System.currentTimeMillis() - windowStart;
             double recsPerSec = 1000.0 * windowCount / (double) elapsed;
             double mbPerSec = 1000.0 * this.windowBytes / (double) elapsed / (1024.0 * 1024.0);
-            System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency (window), %.1f ms max latency (window), %.1f ms avg latency, %.1f ms max latency.%n",
+            System.out.printf("%d records sent, %.1f records/sec (%.2f MB/sec), %.1f ms avg latency (window), %.1f ms max latency (window), %.1f ms avg latency, %.1f ms max latency, %d records/sec max.%n",
                               windowCount,
                               recsPerSec,
                               mbPerSec,
                               windowTotalLatency / (double) windowCount,
                               (double) windowMaxLatency,
                               totalLatency / (double) count,
-                              (double) maxLatency);
+                              (double) maxLatency, throughputLimitG);
             System.out.flush();
         }
 
