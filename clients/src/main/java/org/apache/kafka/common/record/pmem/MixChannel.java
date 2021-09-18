@@ -602,8 +602,13 @@ public class MixChannel extends FileChannel {
         // remove from migrator
         migrator.remove(this);
 
-        if (this.status == Status.MIGRATION) {
-            log.info("Delete " + path + " while migration in process");
+        while (this.status == Status.MIGRATION) {
+            log.debug("Delete " + path + " blocking due to migration in process");
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                log.error("sleep Exception: ", e);
+            }
         }
 
         synchronized (this.lock) {
