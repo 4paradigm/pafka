@@ -829,11 +829,14 @@ class KafkaConfigTest {
         case RaftConfig.QUORUM_REQUEST_TIMEOUT_MS_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_number")
         case RaftConfig.QUORUM_RETRY_BACKOFF_MS_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_number")
 
-        // Pmem config
+        // PMem config
         case KafkaConfig.PMemPathProp => // ignore
         case KafkaConfig.PMemLogPoolRatioProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
         case KafkaConfig.PMemSizeProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
         case KafkaConfig.LogChannelTypeProp => // ignore
+        case KafkaConfig.MigrateThreadsProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
+        case KafkaConfig.MigrateThresholdProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
+        case KafkaConfig.HddPathProp => // ignore
 
         case _ => assertPropertyInvalid(baseProperties, name, "not_a_number", "-1")
       }

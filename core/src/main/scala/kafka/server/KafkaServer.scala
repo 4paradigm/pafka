@@ -190,15 +190,18 @@ class KafkaServer(
         brokerState = BrokerState.STARTING
 
         // pre-allocate heap
-        if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
-          val path = config.pmemPath
+        if (config.logChannelType.compareToIgnoreCase("pmem") == 0 || config.logChannelType.compareToIgnoreCase("mix") == 0) {
+          val pmemPath = config.pmemPath
           val size = config.pmemSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
-          val migrateThreshold = config.migrateThreshold.doubleValue()
-          val migrateThreads = config.migrateThreads.intValue()
+          PMemChannel.init(pmemPath, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
 
-          PMemChannel.init(path, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
-          MixChannel.init(path, "/tmp/kafka", size, migrateThreshold, migrateThreads)
+          if (config.logChannelType.compareToIgnoreCase("mix") == 0) {
+            val migrateThreshold = config.migrateThreshold.doubleValue()
+            val migrateThreads = config.migrateThreads.intValue()
+            val hddPath = config.hddPath
+            MixChannel.init(pmemPath, hddPath, size, migrateThreshold, migrateThreads)
+          }
         }
 
         /* setup zookeeper */
@@ -752,7 +755,7 @@ class KafkaServer(
         shutdownLatch.countDown()
 
         // close PMemHeap
-        if (config.logChannelType.compareToIgnoreCase("pmem") == 0) {
+        if (config.logChannelType.compareToIgnoreCase("mix") == 0) {
           MixChannel.stop();
         }
 

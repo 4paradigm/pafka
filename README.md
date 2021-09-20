@@ -111,19 +111,24 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 
 |Config|Default Value|Note|
 |------|-------------|----|
-|storage.pmem.path|/tmp/pmem|pmem mount path|
-|storage.pmem.size|21,474,836,480|pmem size|
-|log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.|
-|log.channel.type|file|log file channel type. Options: "file", "pmem".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage|
+|storage.pmem.path|/pmem|pmem mount path. first-layer storage <br /> (Only applicable if log.channel.type=mix or pmem)|
+|storage.pmem.size|-1|pmem capacity in bytes; -1 means use all the space <br />(Only applicable if log.channel.type=mix or pmem)|
+|storage.hdd.path|/hdd|hdd mount path. second-layer storage <br />(Only applicable if log.channel.type=mix)|
+|storage.migrate.threads|1|the number of threads used for migration <br />(Only applicable if log.channel.type=mix)|
+|storage.migrate.threshold|0.6|the threshold used to control when to start the migration <br />(Only applicable if log.channel.type=mix)|
+|log.channel.type|file|log file channel type. <br /> Options: "file", "pmem", "mix".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage<br />"mix": use MixChannel, which will use pmem as the first-layer storage and hdd as the second-layer storage|
+|log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.<br />(Only applicable if log.channel.type=mix or pmem)|
 
 > :warning: **`log.preallocate` has to be set to `true` if pmem is used, as PMem MemoryBlock does not support `append`-like operations.**
 
 Sample config in config/server.properties is as follows:
 
+    log.dirs=/mnt/pmem/kafka/
     storage.pmem.path=/mnt/pmem/kafka/
-    storage.pmem.size=21474836480
-    log.pmem.pool.ratio=0.6
-    log.channel.type=pmem
+    storage.pmem.size=600000000000
+    storage.hdd.path=/mnt/hdd/kafka
+    log.pmem.pool.ratio=0.8
+    log.channel.type=mix
     # log.preallocate have to set to true if pmem is used
     log.preallocate=true
 
@@ -137,33 +142,59 @@ Follow instructions in https://kafka.apache.org/quickstart. Basically:
 
  ##### Producer
 
+###### Single Client
 ```bash
 # bin/kafka-producer-perf-test.sh --topic $TOPIC --throughput $MAX_THROUGHPUT --num-records $NUM_RECORDS --record-size $RECORD_SIZE --producer.config config/producer.properties --producer-props bootstrap.servers=$BROKER_IP:$PORT
 bin/kafka-producer-perf-test.sh --topic test --throughput 1000000 --num-records 1000000 --record-size 1024 --producer.config config/producer.properties --producer-props bootstrap.servers=localhost:9092
 ```
 
+###### Multiple Clients
+We provide a script to let you run multiple clients on multiple hosts.
+For example, if you want to run 16 producers in each of the hosts, `node-1` and `node-2`, you can run the following command:
+```bash
+python3 bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type producer
+```
+In total, there are 32 clients, which will generate 100000000 records. Each client is responsible for populating one topic.
+
+> In order to make it work, you have to configure password-less login from the running machine
+> to the client machines.
+
+
+You can run `python3 bin/bench.py --help` to see other benchmark options.
+
  ##### Consumer
 
+###### Single Client
 ```bash
 # bin/kafka-consumer-perf-test.sh --topic $TOPIC --consumer.config config/consumer.properties --bootstrap-server $BROKER_IP:$PORT --messages $NUM_RECORDS --show-detailed-stats --reporting-interval $REPORT_INTERVAL --timeout $TIMEOUT_IN_MS
 bin/kafka-consumer-perf-test.sh --topic test --consumer.config config/consumer.properties --bootstrap-server localhost:9092 --messages 1000000 --show-detailed-stats --reporting-interval 1000 --timeout 100000
 ```
 
+###### Multiple Clients
+Similarly, you can use the same script as producer benchmark to launch multiple clients.
+```bash
+python3 bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type consumer
+```
+
 ## Limitations
 
-- We only benchmark the performance on the single-server setting. Multiple-server benchmark is undergoing.
-- pmdk llpl `MemoryBlock` does not provide a `ByteBuffer` API. We did some hacking to provide a zero-copy ByteBuffer API. You may see some warnings from JRE with version >= 9. We've tested on Java 8, Java 11 and Java 15.
+- pmdk llpl `MemoryPool` does not provide a `ByteBuffer` API.
+We did some hacking to provide a zero-copy ByteBuffer API. You may see some warnings from JRE with version >= 9.
+We've tested on Java 8, Java 11 and Java 15.
 
-
-   > WARNING: An illegal reflective access operation has occurred                                                                                                                                                    
-   > WARNING: Illegal reflective access by com.intel.pmem.llpl.MemoryAccessor (file:/4pd/home/zhanghao/workspace/kafka/core/build/dependant-libs-2.13.4/llpl.jar) to field java.nio.Buffer.address                   
-   > WARNING: Please consider reporting this to the maintainers of com.intel.pmem.llpl.MemoryAccessor                                                                                                                
-   > WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations                                                                                                           
+   > WARNING: An illegal reflective access operation has occurred
+   > WARNING: Illegal reflective access by com.intel.pmem.llpl.MemoryPoolImpl to field java.nio.Buffer.address
+   > WARNING: Please consider reporting this to the maintainers of com.intel.pmem.llpl.MemoryPoolImpl
+   > WARNING: Use --illegal-access=warn to enable warnings of further illegal reflective access operations
    > WARNING: All illegal access operations will be denied in a future release
 
 
 - Currently, only the log files are stored in PMem, while the indexes are still kept as normal files, as we do not see much performance gain if we move the indexes to PMem.
 - The current released version (`v0.1.x`) uses PMem as the only storage device, which may limit the use for some scenarios that require a large capacity for log storage. The next release (`v0.2.0`) will address this issue by introducing a tiered storage strategy.
+=======
+- Currently, only the log files are stored in PMem, while the indexes are still kept as normal files,
+as we do not see much performance gain if we move the indexes to PMem.
+>>>>>>> add mix channel type and update some config fields
 
 
 ## Roadmap

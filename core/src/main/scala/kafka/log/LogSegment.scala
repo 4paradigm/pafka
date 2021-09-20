@@ -659,9 +659,15 @@ object LogSegment {
   def open(dir: File, baseOffset: Long, config: LogConfig, time: Time, fileAlreadyExists: Boolean = false,
            initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = ""): LogSegment = {
     val maxIndexSize = config.maxIndexSize
+    var channelType = FileChannelType.FILE
+    if (config.channelType.compareToIgnoreCase("pmem") == 0) {
+      channelType = FileChannelType.PMEM;
+    } else if (config.channelType.compareToIgnoreCase("mix") == 0) {
+      channelType = FileChannelType.MIX;
+    }
+
     new LogSegment(
-      FileRecords.open(Log.logFile(dir, baseOffset, fileSuffix), fileAlreadyExists, initFileSize, preallocate,
-        if (config.channelType.compareToIgnoreCase("pmem") == 0) FileChannelType.PMEM else FileChannelType.FILE),
+      FileRecords.open(Log.logFile(dir, baseOffset, fileSuffix), fileAlreadyExists, initFileSize, preallocate, channelType),
       LazyIndex.forOffset(Log.offsetIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),
       LazyIndex.forTime(Log.timeIndexFile(dir, baseOffset, fileSuffix), baseOffset = baseOffset, maxIndexSize = maxIndexSize),
       new TransactionIndex(baseOffset, Log.transactionIndexFile(dir, baseOffset, fileSuffix)),

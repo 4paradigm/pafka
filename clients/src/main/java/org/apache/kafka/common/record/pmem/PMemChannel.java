@@ -104,6 +104,13 @@ public class PMemChannel extends FileChannel {
     public final static String DELETED_FLAG = "_deleted_";
 
     public static void init(String path, long size, int blockSize, double poolRatio) {
+        // use all the storage space if capacity is configured to -1
+        if (size == -1) {
+            File file = new File(path);
+            size = file.getTotalSpace();
+            log.info("PMem size is set to total capacity of device: " + size);
+        }
+
         pmemRootPathG = path;
         pSizeG = size;
         File file = new File(pmemRootPathG);

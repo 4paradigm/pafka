@@ -26,12 +26,13 @@ arg_parser.add_argument("--hosts", help="host list", type=str, default="node-1 n
 arg_parser.add_argument("--java_home", help="java home", type=str, default=os.environ.get("JAVA_HOME"))
 arg_parser.add_argument("--wait_for_all", help="wait for all clients to complete", action="store_true", default=False)
 arg_parser.add_argument("--reporting_interval", help="report interval in miliseconds", type=int, default=2000)
-arg_parser.add_argument("--throttler_config", help="throttler config", type=str, default="/tmp/producer-throttler")
+arg_parser.add_argument("--throttler_config", help="throttler config (applicable to dynamic throughput only)", type=str, default="/tmp/producer-throttler")
 arg_parser.add_argument("--output_file", help="result output file", type=str, default="")
-arg_parser.add_argument("--sleept", help="min sleep time for every step (dynamic throughput)", type=int, default=10)
-arg_parser.add_argument("--steps", help="total steps (dynamic throughput)", type=int, default=5)
-arg_parser.add_argument("--control_type", help="control type: sleep; step", type=str, default="sleep")
-arg_parser.add_argument("--only_min_max", help="only use the min and max throughut (dynamic throughput)", action="store_true", default=False)
+arg_parser.add_argument("--sleept", help="min sleep time for every step (applicable to dynamic throughput only)", type=int, default=10)
+arg_parser.add_argument("--steps", help="total steps (applicable to dynamic throughput only)", type=int, default=5)
+arg_parser.add_argument("--control_type", help="control type: sleep; step (applicable to dynamic throughput only)", type=str, default="sleep")
+arg_parser.add_argument("--only_min_max", help="only use the min and max throughut (applicable to dynamic throughput only)", action="store_true", default=False)
+arg_parser.add_argument("--topic_config", help="topic configs sep by ';'", type=str, default="file.delete.delay.ms=1")
 
 start_timestamp = 0
 
@@ -98,19 +99,37 @@ def launch_clients(args, later=10):
 
         outs[host] = []
         for i in range(args.threads):
+            topic = "test-{}".format(count)
             if args.type == "producer":
                 if args.use_dynamic:
                     cmdprefix = "PRODUCER_THROTTLER_CONFIG={} ".format(args.throttler_config) + cmdprefix
-                cmd='ssh {} "cd {}; JAVA_HOME={} {} ./bin/kafka-producer-perf-test.sh --topic test-{} --num-records {} --record-size {} --producer.config config/producer.properties --throughput {} --producer-props bootstrap.servers={} --reporting-interval {}" 2>&1'.format(host, bin, args.java_home, cmdprefix, count, records_per_thread, args.record_size, throughput_per_thread, args.brokers, args.reporting_interval)
+                cmd='ssh {} "cd {}; JAVA_HOME={} {} ./bin/kafka-producer-perf-test.sh --topic {} --num-records {} --record-size {} --producer.config config/producer.properties --throughput {} --producer-props bootstrap.servers={} --reporting-interval {}" 2>&1'.format(host, bin, args.java_home, cmdprefix, topic, records_per_thread, args.record_size, throughput_per_thread, args.brokers, args.reporting_interval)
             else:
-                cmd='ssh {} "cd {}; JAVA_HOME={} {} ./bin/kafka-consumer-perf-test.sh --topic test-{} --messages {} --consumer.config config/consumer.properties --bootstrap-server {} --show-detailed-stats --timeout {} --reporting-interval {}" 2>&1'.format(host, bin, args.java_home, cmdprefix, count, records_per_thread, args.brokers, args.timeout, args.reporting_interval)
+                cmd='ssh {} "cd {}; JAVA_HOME={} {} ./bin/kafka-consumer-perf-test.sh --topic {} --messages {} --consumer.config config/consumer.properties --bootstrap-server {} --show-detailed-stats --timeout {} --reporting-interval {}" 2>&1'.format(host, bin, args.java_home, cmdprefix, topic, records_per_thread, args.brokers, args.timeout, args.reporting_interval)
             outs[host].append(execute_cmd_realtime(cmd))
             count += 1
 
     end = time.time()
     print("launch clients in {} seconds".format(end - start))
-    time.sleep(later)
+    to_sleep = later - (end - start)
+    if to_sleep > 0:
+        time.sleep(to_sleep)
     return outs
+
+
+def config_topic(topic_num, brokers, topic_config):
+    print("config topic: {}".format(topic_config))
+    configs = topic_config.split(";")
+    for i in range(topic_num):
+        topic = "test-{}".format(i)
+        for config in configs:
+            cmd='cd {}; bin/kafka-topics.sh --bootstrap-server {} --create --topic {} --config {}'.format(PAFKA_HOME, brokers, topic, config)
+            out, err = execute_cmd(cmd)
+            # print("cmd1:", out, err)
+
+            cmd='cd {}; bin/kafka-configs.sh --bootstrap-server {} --entity-type topics --entity-name {} --alter --add-config {}'.format(PAFKA_HOME, brokers, topic, config)
+            out, err = execute_cmd(cmd)
+            # print("cmd2:", out, err)
 
 
 def control_clients(hosts, threads, throughput=0, init=False):
@@ -334,6 +353,9 @@ if __name__ == "__main__":
         throttler = Throttler(hosts=hosts, threads=threads, dynamic_thr=args.dynamic, sleept=args.sleept, steps=args.steps, control_type=args.control_type, only_min_max=args.only_min_max)
         throttler.daemon = True
         throttler.start()
+
+    if args.type == "producer":
+        config_topic(total_clients, args.brokers, args.topic_config)
 
     # launch all the clients
     outs = launch_clients(args)
