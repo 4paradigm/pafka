@@ -11,54 +11,25 @@
 Pafka: Persistent Memory (PMem) Accelerated Kafka
 ===
 
-## Introduction
+## 1. Introduction
 
-Pafka is an evolved version of Apache Kafka developed by [MemArk](https://memark.io/en). Kafka is an open-source distributed event streaming/message queue system for handling real-time data feeds efficiently and reliably. However, its performance (e.g., throughput and latency) is constrained by the slow disk. Pafka enhances Kafka using Intel® Optane™ Persistent Memory (PMem) that can achieve more efficient persistence performance compared with HDD/SSD. With careful design and implementation, Pafka can achieve 7.5 GB/s write throughput and 10 GB/s read throughput on a single CPU socket.
+Pafka is an evolved version of Apache Kafka developed by [MemArk](https://memark.io/en). Kafka is an open-source distributed event streaming/message queue system for handling real-time data feeds efficiently and reliably. However, its performance (e.g., throughput and latency) is constrained by slow external storage. Pafka enhances Kafka based on tiered storage architecture, which is usually equipped with high-performance SSD or Intel® Optane™ Persistent Memory (PMem). With the careful design of data migration algorithms, it improves overall persistence performance with low cost. For example, it can well support the scenario that high data production rate is repeated after an interval of time (e.g., special discount is released every one hour from a shopping website); it is also capable of improving the overall performance when high throughput is required over a long period. 
 
+Please refer to our latest blog for Pafka benchmark and use cases :point_right: xxxxxxxxxxxxxx (中文版本)
 
-## Pafka vs Kafka
+## 2. Architecture
 
-### Performance
+The basic idea behind Pafka is to utilize tiered storage architecture to enhance overall performance of a system. Nowadays, a data center may have various kinds of storage devices, such as HDD, SSD, and state-of-the-art non-volatile [persistent memory](https://www.intel.sg/content/www/xa/en/architecture-and-technology/optane-dc-persistent-memory.html). However, Kafka is not aware of such storage hierarchy. In this project, we enhance Kafka by using the high performance storage device, e.g., PMem, as the first layer of storage, together with carefully designed migration algorithms, to significantly improve overall performance for specific scenarios.
 
-We conducted some preliminary experiments on our in-house servers. One server is used as the Kafka broker server, and another two servers as the clients. Each of the client servers run 16 clients to saturate the server throughput. We're using the `ProducerPerformance` and `ConsumerPerformance` shipped by Kafka and the record size of 1024 for the benchmark.
+The key challenge of taking advantage of tiered storage is to design the data partitioning and migration mechanism between the fast and slow devices. The overall architecture and key workflow of Pafka are illustrated in the below figure. Basically, data is written onto PMem when there is available space, otherwise onto HDD. Besides, there is a background migration task to balance the data between PMem and HDD. Specifically, a new parameter `storage.migrate.threshold` is introduced to indicate when the migration is triggered. Specifically, when the used space of PMem exceeds the threshold, the oldest data on the PMem is migrated to HDD; otherwise the newest data on the HDD is migrated to PMem. The migration tries to keep the fresh data in the PMem to achieve the efficiency of consumers.
 
-#### Server Specification
+<img src="docs/plot/arch.png" alt="arch" style="zoom: 50%;" />
 
-The server spec is as follows:
+## 3. Get Started
 
-|Item|Spec|
-|---|----|
-|CPU|Intel(R) Xeon(R) Gold 6252 Processor (24 cores/48 threads) * 2|
-|Memory|376 GB|
-|Network|Mellanox ConnectX-5 100 Gbps|
-|PMem|128 GB x 6 = 768 GB|
+For the complete documentation of Kafka, refer to [here](README.kafka.md).
 
-The storage spec and performance:
-
-|Storage Type|Write (MB/s)|Read (MB/s)|
-|---|---|---|
-|HDD|32k: 5.7 <br/> 320k: 37.5 <br/> 3200k: 78.3 <br/>|86.5|
-|HDD RAID|530|313|
-|Sata SSD|458|300|
-|NVMe SSD|2,421|2,547|
-|PMem|9,500|37,120|
-
-For `HDD`, we use batch size of 32k, 320k and 3200k for write, respectively, while read does not change much as we increase the batch size. For other storage types, we use batch size of 32k, as increasing to larger batch size does not increase the performance much. For `PMem`, we use `PersistentMemoryBlock` of [pmdk llpl](https://github.com/4paradigm/llpl) for the performance benchmark.
-
-#### Performance Results
-
-<p float="left">
-    <img src="docs/plot/perf.png" alt="throughput" width="400"/>
-    <img src="docs/plot/latency.png" alt="latency" width="400"/>
-</p>
-As we can see, the consumer throughput of Pafka with PMem has almost reached the network bottleneck (100 Gbps ~= 12.5 GB/s). Compared with NVMe SSD, Pafka boosts the producer throughput by 275% to 7508.68 MB/sec. In terms of latency, Pafka can achieve an average latency of 0.1 seconds for both producer and consumer.
-
-
-## Get Started
-
-For complete documentation of Kafka, refer to [here](README.kafka.md).
-
-### Docker Image
+### 3.1. Docker Image
 The easiest way to try Pafka is to use the docker image: https://hub.docker.com/r/4pdopensource/pafka-dev
 
 ```
@@ -69,9 +40,9 @@ where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host s
 
 If you use the docker image, you can skip the following `Compile` step.
 
-### Compile
+### 3.2. Compile
 
-#### Dependencies
+#### 3.2.1. Dependencies
 
 - [pmdk pcj](https://github.com/4paradigm/pcj)
 - [pmdk llpl](https://github.com/4paradigm/llpl)
@@ -79,33 +50,33 @@ If you use the docker image, you can skip the following `Compile` step.
 > :warning: **We have done some modifications on the original pmdk source codes. 
 > Please download the source code from the two repositories provided above.**
 
-**We have already shipped pcj and llpl jars in `libs` folder in the Pafka repository. They are compiled with java 8 and g++ 4.8.5. In general, you are not required to compile the two libraries by yourself. However, if you encounter any compilation/running error caused by these two libraries, you can download the source codes and compile on your own environment.**
-
-##### Compile pmdk libraries
+We have already shipped pcj and llpl jars in `libs` folder in the Pafka repository. They are compiled with java 8 and g++ 4.8.5. In general, you are not required to compile the two libraries by yourself. However, if you encounter any compilation/running error caused by these two libraries, you can download the source codes and compile on your own environment as below.
 
 After cloning the source code:
 
-    # compile pcj
-    cd pcj
-    make && make jar
-    cp target/pcj.jar $PAFKA_HOME/libs
-    
-    # compile llpl
-    cd llpl
-    make && make jar
-    cp target/llpl.jar $PAFKA_HOME/libs
+```bash
+# compile pcj
+cd pcj
+make && make jar
+cp target/pcj.jar $PAFKA_HOME/libs
 
-#### Build Pafka jar
+# compile llpl
+cd llpl
+make && make jar
+cp target/llpl.jar $PAFKA_HOME/libs
+```
+
+#### 3.2.2. Build Pafka Jar
 
     ./gradlew jar
 
-### Run
+### 3.3. Run
 
-#### Environmental setup
-To see whether it works or not, you can use any file system with normal hard disk. For the best performance, it requires the availability of PMem hardware mounted as a DAX file system. 
+#### 3.3.1. Environmental Setup
+To verify the correctness, you can use any file systems with normal hard disks. To take advantage of tiered storage architecture, it requires the availability of PMem hardware mounted as a DAX file system. 
 
 
-#### Config
+#### 3.3.2. Config
 
 In order to support PMem storage, we add some more config fields to the Kafka [server config](config/server.properties). 
 
@@ -115,7 +86,7 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 |storage.pmem.size|-1|pmem capacity in bytes; -1 means use all the space <br />(Only applicable if log.channel.type=mix or pmem)|
 |storage.hdd.path|/hdd|hdd mount path. second-layer storage <br />(Only applicable if log.channel.type=mix)|
 |storage.migrate.threads|1|the number of threads used for migration <br />(Only applicable if log.channel.type=mix)|
-|storage.migrate.threshold|0.6|the threshold used to control when to start the migration <br />(Only applicable if log.channel.type=mix)|
+|storage.migrate.threshold|0.5|the threshold used to control when to start the migration. <br /> -1 means no migration. <br />(Only applicable if log.channel.type=mix)|
 |log.channel.type|file|log file channel type. <br /> Options: "file", "pmem", "mix".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage<br />"mix": use MixChannel, which will use pmem as the first-layer storage and hdd as the second-layer storage|
 |log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.<br />(Only applicable if log.channel.type=mix or pmem)|
 
@@ -123,16 +94,16 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 
 Sample config in config/server.properties is as follows:
 
-    log.dirs=/mnt/pmem/kafka/
-    storage.pmem.path=/mnt/pmem/kafka/
+    log.dirs=/pmem/kafka-pool
+    storage.pmem.path=/pmem/kafka
     storage.pmem.size=600000000000
-    storage.hdd.path=/mnt/hdd/kafka
+    storage.hdd.path=/hdd/kafka-pool
     log.pmem.pool.ratio=0.8
     log.channel.type=mix
     # log.preallocate have to set to true if pmem is used
     log.preallocate=true
 
-#### Start Pafka
+#### 3.3.3. Start Pafka
 Follow instructions in https://kafka.apache.org/quickstart. Basically:
 
     bin/zookeeper-server-start.sh config/zookeeper.properties > zk.log 2>&1 &
@@ -152,13 +123,12 @@ bin/kafka-producer-perf-test.sh --topic test --throughput 1000000 --num-records 
 We provide a script to let you run multiple clients on multiple hosts.
 For example, if you want to run 16 producers in each of the hosts, `node-1` and `node-2`, you can run the following command:
 ```bash
-python3 bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type producer
+bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type producer
 ```
 In total, there are 32 clients, which will generate 100000000 records. Each client is responsible for populating one topic.
 
 > In order to make it work, you have to configure password-less login from the running machine
 > to the client machines.
-
 
 You can run `python3 bin/bench.py --help` to see other benchmark options.
 
@@ -173,10 +143,10 @@ bin/kafka-consumer-perf-test.sh --topic test --consumer.config config/consumer.p
 ###### Multiple Clients
 Similarly, you can use the same script as producer benchmark to launch multiple clients.
 ```bash
-python3 bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type consumer
+bin/bench.py --threads 16 --hosts "node-1 node-2" --num_records 100000000 --type consumer
 ```
 
-## Limitations
+## 4. Limitations
 
 - pmdk llpl `MemoryPool` does not provide a `ByteBuffer` API.
 We did some hacking to provide a zero-copy ByteBuffer API. You may see some warnings from JRE with version >= 9.
@@ -191,29 +161,24 @@ We've tested on Java 8, Java 11 and Java 15.
 
 - Currently, only the log files are stored in PMem, while the indexes are still kept as normal files, as we do not see much performance gain if we move the indexes to PMem.
 - The current released version (`v0.1.x`) uses PMem as the only storage device, which may limit the use for some scenarios that require a large capacity for log storage. The next release (`v0.2.0`) will address this issue by introducing a tiered storage strategy.
-=======
-- Currently, only the log files are stored in PMem, while the indexes are still kept as normal files,
-as we do not see much performance gain if we move the indexes to PMem.
->>>>>>> add mix channel type and update some config fields
 
 
-## Roadmap
+## 5. Roadmap
 
 | Version |	Status | Features |
 |---|---|---|
 |v0.1.1|Released|- Use PMem for data storage <br /> - Significant performance boost compared with Kafka |
-|v0.2.0|To be released in September 2021|- A layered storage strategy to utilize the total capacity of all storage devices (HDD/SSD/PMem) while maintaining the efficiency by our cold-hot data migration algorithms<br /> - Further PMem performance improvement by using `libpmem` |
+|v0.2.0|Released|- A two-layered storage strategy to utilize the total capacity of all storage devices while maintaining the efficiency by our cold-hot data migration algorithms<br /> - Further PMem performance improvement by using `libpmem` |
+|v0.3.0|Q4 2021|- Configurable storage devices for both 1st and 2nd layers, to support using large SSD as the first layer |
 
-## Community
+## 6. Community
 
 Pafka is developed by MemArk (https://memark.io/en), which is a tech community focusing on leveraging modern storage architecture for system enhancement. MemArk is led by 4Paradigm (https://www.4paradigm.com/) and other sponsors (such as Intel). Please join our community for:
 
-- Chatting: For any feedback, suggestions, issues, and anything about using Pafka or other storage related topics, you can join our interactive discussion channel at **Slack** [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
+- Chatting: For any feedback, suggestions, issues, and anything about using Pafka or other storage related topics, we strongly encourage you to join our interactive discussion channel at **Slack** [#pafka-help](https://join.slack.com/t/memarkworkspace/shared_invite/zt-o1wa5wqt-euKxFgyrUUrQCqJ4rE0oPw)
 - Development discussion: If you would like to formally report a bug or suggestion, please use the **GitHub Issues**; if you would like to propose a new feature for some discussion, or would like to start a pull request, please use the **GitHub Discussions**, and our developers will respond promptly.
 
-You can also contact the authors directly for any feedback:
-- ZHANG Hao: zhanghao@4paradigm.com
-- LU Mian: lumian@4paradigm.com
+You can also contact the MemArk community for any feedback: contact@memark.io
 
 
 
