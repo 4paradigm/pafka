@@ -130,6 +130,7 @@ In total, there are 32 clients, which will generate 100000000 records. Each clie
 > In order to make it work, you have to configure password-less login from the running machine
 > to the client machines.
 
+
 You can run `python3 bin/bench.py --help` to see other benchmark options.
 
  ##### Consumer
@@ -160,7 +161,7 @@ We've tested on Java 8, Java 11 and Java 15.
 
 
 - Currently, only the log files are stored in PMem, while the indexes are still kept as normal files, as we do not see much performance gain if we move the indexes to PMem.
-- The current released version (`v0.1.x`) uses PMem as the only storage device, which may limit the use for some scenarios that require a large capacity for log storage. The next release (`v0.2.0`) will address this issue by introducing a tiered storage strategy.
+- Release `v0.1.x` uses PMem as the only storage device, which may limit the use for some scenarios that require a large capacity for log storage. Release `v0.2.0` addresses this issue by introducing a tiered storage strategy.
 
 
 ## 5. Roadmap
