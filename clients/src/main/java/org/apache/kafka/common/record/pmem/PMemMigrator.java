@@ -40,9 +40,10 @@ public class PMemMigrator {
     /**
      * above threadhold1, start migrate from PMEM to HDD from the tail
      */
-    private double threshold1 = 0;
+    private double threshold1 = 0.5;
     /**
      * below threshold2, start migrate from HDD to PMEM from the head
+     * TODO(zhanghao): threshold2 is not used
      */
     private double threshold2 = 0.8;
     MixChannel lastEvicted;
@@ -68,22 +69,40 @@ public class PMemMigrator {
         }
     }
 
-    private static class MigrateTask {
+    private class MigrateTask {
         private MixChannel channel;
         private MixChannel.Mode mode;
+        private long size;
+        private String chStr;
 
         public MigrateTask(MixChannel ch, MixChannel.Mode mode) {
             this.channel = ch;
             this.mode = mode;
+            this.size = ch.occupiedSize();
+            this.chStr = ch.toString();
         }
 
         public void run(Runnable runner) {
             log.info("[" + runner.toString() + "] Running task: migrating " + channel.toString() + " to " + mode);
+            boolean migrateSuccess = false;
             try {
-                this.channel.setMode(this.mode);
+                migrateSuccess = this.channel.setMode(this.mode);
                 this.channel.setStatus(MixChannel.Status.INIT);
             } catch (IOException e) {
                 log.error("Migrate error: " + e.getMessage());
+                migrateSuccess = false;
+            }
+
+            // add back the usage
+            if (!migrateSuccess) {
+                log.info(this.chStr + ": migrate failed");
+                synchronized (statslLock) {
+                    if (this.mode.higherThan(MixChannel.Mode.HDD)) {
+                        usedG += size;
+                    } else {
+                        usedG -= size;
+                    }
+                }
             }
         }
     };
@@ -151,9 +170,11 @@ public class PMemMigrator {
                 // copy channel from tmpChannels
                 ArrayList<MixChannel> clonedChannels = null;
                 long used = 0;
+                long usedStart = 0;
                 long usedTotal = 0;
                 synchronized (statslLock) {
                     used = usedG;
+                    usedStart = usedG;
                     usedTotal = usedTotalG;
                     clonedChannels = (ArrayList) tmpChannels.clone();
                     tmpChannels.clear();
@@ -177,8 +198,7 @@ public class PMemMigrator {
                 }
 
                 synchronized (statslLock) {
-                    usedG = used;
-                    usedTotalG = usedTotal;
+                    usedG += used - usedStart;
                 }
 
                 try {
@@ -207,7 +227,6 @@ public class PMemMigrator {
     public PMemMigrator(int threads, long capacity, double threshold) {
         this.capacity = capacity;
         this.threshold1 = threshold;
-        // FIXME(zhanghao): remove
         this.threshold2 = threshold;
         threadPool = new KafkaThread[threads + 1];
         migrates = new Migrate[threads];

@@ -167,8 +167,12 @@ public class MixChannel extends FileChannel {
         log.info(defaultMode + " capacity is set to " + capacity);
 
         // start migration background threads
-        migrator = new PMemMigrator(migrateThreads, capacity, threshold);
-        migrator.start();
+        if (threshold != -1) {
+            migrator = new PMemMigrator(migrateThreads, capacity, threshold);
+            migrator.start();
+        } else {
+            log.info("Disable Migrator");
+        }
     }
 
     public static void stop() throws InterruptedException {
@@ -187,7 +191,9 @@ public class MixChannel extends FileChannel {
         synchronized (GLOBAL_LOCK) {
             ch = new MixChannel(file, initFileSize, preallocate, mutable);
         }
-        migrator.add(ch);
+        if (migrator != null) {
+            migrator.add(ch);
+        }
         return ch;
     }
 
@@ -282,7 +288,8 @@ public class MixChannel extends FileChannel {
 
     @Override
     public String toString() {
-        return "MixChannel " + this.mode + " " + getNamespace() + "/" + getId();
+        String status = " [Status: " + this.status + ", deleted: " + deleted + "]";
+        return "MixChannel " + this.mode + " " + getNamespace() + "/" + getId() + status;
     }
 
     public Status setStatus(Status s) {
@@ -298,10 +305,10 @@ public class MixChannel extends FileChannel {
         return this.mode;
     }
 
-    public void setMode(Mode m) throws IOException {
+    public boolean setMode(Mode m) throws IOException {
         if (this.mode != m) {
             if (deleted) {
-                return;
+                return false;
             }
 
             FileChannel newChannel = null;
@@ -309,24 +316,32 @@ public class MixChannel extends FileChannel {
                 newChannel = migrate(m);
             } catch (IOException e) {
                 if (deleted) {
-                    return;
+                    return false;
                 } else {
                     throw e;
                 }
             }
-            FileChannel oldChannel = getChannel();
-            Mode oldMode = getMode();
-            safeDeleteOld(m, newChannel, oldMode, oldChannel);
 
+            if (newChannel == null) {
+                return false;
+            }
+
+            if (!safeDeleteOld(m, newChannel)) {
+                return false;
+            }
+
+            Mode oldMode = getMode();
             synchronized (GLOBAL_LOCK) {
                 if (oldMode.higherThan(this.mode)) {
                     highStat.minusUsed(this.occupiedSize());
                 }
             }
         }
+
+        return true;
     }
 
-    private void safeDeleteOld(Mode newMode, FileChannel newChannel, Mode oldMode, FileChannel oldChannel) throws IOException {
+    private boolean safeDeleteOld(Mode newMode, FileChannel newChannel) throws IOException {
         synchronized (this.lock) {
             /*
              * there may be a case, where another thread is deleting this channel, acquired the lock
@@ -340,7 +355,11 @@ public class MixChannel extends FileChannel {
                 } else {
                     log.error("Not support channel " + mode);
                 }
+                return false;
             }
+
+            FileChannel oldChannel = getChannel();
+            Mode oldMode = getMode();
 
             this.channels[newMode.value] = newChannel;
             // below is necessary to ensure elements in channels is volatile
@@ -375,6 +394,7 @@ public class MixChannel extends FileChannel {
                     log.error("Not support " + oldMode);
             }
         }
+        return true;
     }
 
     private FileChannel migrate(Mode m) throws IOException {
@@ -386,7 +406,15 @@ public class MixChannel extends FileChannel {
         FileChannel newChannel = null;
         switch (m) {
             case PMEM:
-                newChannel = PMemChannel.open(this.path, (int) this.size(), true, true);
+                synchronized (GLOBAL_LOCK) {
+                    if (highStat.getUsed() + this.size() <= highStat.getCapacity()) {
+                        newChannel = PMemChannel.open(this.path, (int) this.size(), true, true);
+                        highStat.addUsed(this.size());
+                    } else {
+                        log.info("Migrate failed (cannot create PMemChannel): " + defaultMode + " used = " + highStat.getUsed() + ", limit = " + highStat.getCapacity());
+                        return null;
+                    }
+                }
                 break;
             case HDD:
                 newChannel = openFileChannel(this.path, (int) this.size(), true, true);
@@ -418,7 +446,17 @@ public class MixChannel extends FileChannel {
     }
 
     private FileChannel getChannel() {
-        return this.channels[this.mode.value];
+        if (this.channels == null) {
+            log.error(this + " is null.");
+            return null;
+        }
+
+        Mode m = this.mode;
+        FileChannel ch = this.channels[m.value];
+        if (ch == null) {
+            log.error(this + " is null.");
+        }
+        return ch;
     }
 
     @Override
@@ -600,16 +638,18 @@ public class MixChannel extends FileChannel {
     public void delete() throws IOException {
         deleted = true;
         // remove from migrator
-        migrator.remove(this);
-
-        while (this.status == Status.MIGRATION) {
-            log.debug("Delete " + path + " blocking due to migration in process");
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                log.error("sleep Exception: ", e);
-            }
+        if (migrator != null) {
+            migrator.remove(this);
         }
+
+//        while (this.status == Status.MIGRATION) {
+//            log.info("Delete " + path + " blocking due to migration in process");
+//            try {
+//                Thread.sleep(500);
+//            } catch (InterruptedException e) {
+//                log.error("sleep Exception: ", e);
+//            }
+//        }
 
         synchronized (this.lock) {
             FileChannel channel = getChannel();
@@ -635,7 +675,9 @@ public class MixChannel extends FileChannel {
             return;
         }
 
-        migrator.remove(this);
+        if (migrator != null) {
+            migrator.remove(this);
+        }
 
         for (FileChannel channel : this.channels) {
             if (channel != null) {
@@ -684,6 +726,13 @@ public class MixChannel extends FileChannel {
     static private void deleteFileChannel(Path file) throws IOException {
         String rPath = toRelativePath(file);
         rPath = lowBasePath + "/" + rPath;
-        Files.deleteIfExists(new File(rPath).toPath());
+        Path lPath = new File(rPath).toPath();
+        Files.deleteIfExists(lPath);
+
+        if (lPath.compareTo(file) == 0) {
+            if (!file.toFile().createNewFile()) {
+                log.debug(file + " already exits");
+            }
+        }
     }
 }

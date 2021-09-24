@@ -1,4 +1,4 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3
 
 import argparse
 import os
@@ -14,25 +14,25 @@ out_f = None
 
 arg_parser = argparse.ArgumentParser()
 arg_parser.add_argument("--type", help="producer/consumer", type=str, default="producer")
-arg_parser.add_argument("--timeout", help="timeout for consumer in ms", type=int, default=1000000)
+arg_parser.add_argument("--timeout", help="timeout in ms (for consumer only)", type=int, default=1000000)
 arg_parser.add_argument("--num_records", help="num of records", type=int, default=5000000)
 arg_parser.add_argument("--record_size", help="record size (for producer only)", type=int, default=1024)
-arg_parser.add_argument("--throughput", help="throughput (for producer only)", type=int, default=12000000)
-arg_parser.add_argument("--dynamic", help="dynamic throughput (for producer only): min:max:avg", type=str, default="100000:500000:8000000")
-arg_parser.add_argument("--use_dynamic", help="use dynamic throughput control", action="store_true", default=False)
+arg_parser.add_argument("--throughput", help="max throughput (for producer only)", type=int, default=12000000)
 arg_parser.add_argument("--brokers", help="broker list", type=str, default="172.29.100.24:9094")
 arg_parser.add_argument("--threads", help="threads per host", type=int, default=16)
-arg_parser.add_argument("--hosts", help="host list", type=str, default="node-1 node-4")
-arg_parser.add_argument("--java_home", help="java home", type=str, default=os.environ.get("JAVA_HOME"))
+arg_parser.add_argument("--hosts", help="the hosts where clients will run", type=str, default="node-1 node-4")
+arg_parser.add_argument("--java_home", help="java home. default: $JAVA_HOME", type=str, default=os.environ.get("JAVA_HOME"))
 arg_parser.add_argument("--wait_for_all", help="wait for all clients to complete", action="store_true", default=False)
 arg_parser.add_argument("--reporting_interval", help="report interval in miliseconds", type=int, default=2000)
-arg_parser.add_argument("--throttler_config", help="throttler config (applicable to dynamic throughput only)", type=str, default="/tmp/producer-throttler")
 arg_parser.add_argument("--output_file", help="result output file", type=str, default="")
+arg_parser.add_argument("--topic_config", help="topic configs sep by ';'", type=str, default="file.delete.delay.ms=1")
+arg_parser.add_argument("--dynamic", help="dynamic throughput (for producer only): min:max:avg", type=str, default="100000:500000:8000000")
+arg_parser.add_argument("--use_dynamic", help="use dynamic throughput control", action="store_true", default=False)
+arg_parser.add_argument("--throttler_config", help="throttler config (applicable to dynamic throughput only)", type=str, default="/tmp/producer-throttler")
 arg_parser.add_argument("--sleept", help="min sleep time for every step (applicable to dynamic throughput only)", type=int, default=10)
 arg_parser.add_argument("--steps", help="total steps (applicable to dynamic throughput only)", type=int, default=5)
 arg_parser.add_argument("--control_type", help="control type: sleep; step (applicable to dynamic throughput only)", type=str, default="sleep")
 arg_parser.add_argument("--only_min_max", help="only use the min and max throughut (applicable to dynamic throughput only)", action="store_true", default=False)
-arg_parser.add_argument("--topic_config", help="topic configs sep by ';'", type=str, default="file.delete.delay.ms=1")
 
 start_timestamp = 0
 
@@ -118,6 +118,9 @@ def launch_clients(args, later=10):
 
 
 def config_topic(topic_num, brokers, topic_config):
+    if topic_config is None or len(topic_config) == 0:
+        return
+
     print("config topic: {}".format(topic_config))
     configs = topic_config.split(";")
     for i in range(topic_num):

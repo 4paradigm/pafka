@@ -104,12 +104,7 @@ public class PMemChannel extends FileChannel {
     public final static String DELETED_FLAG = "_deleted_";
 
     public static void init(String path, long size, int blockSize, double poolRatio) {
-        // use all the storage space if capacity is configured to -1
-        if (size == -1) {
-            File file = new File(path);
-            size = file.getTotalSpace();
-            log.info("PMem size is set to total capacity of device: " + size);
-        }
+        size = getCapacity(path, size);
 
         pmemRootPathG = path;
         pSizeG = size;
@@ -291,7 +286,9 @@ public class PMemChannel extends FileChannel {
                 mpRelativePath = relativePath;
                 String path = joinPath(pmemRootPathG, mpRelativePath);
                 File mpFile = new File(path);
-                // This may be true if program crash immediately after we createPool, but before we put the info to metaStore
+                // This may be true if
+                // 1) program crash immediately after we createPool, but before we put the info to metaStore
+                // 2) storage.pmem.path == log.dirs
                 if (mpFile.exists()) {
                     warn(mpFile + " already exists. Delete it first ");
                     if (!mpFile.delete()) {
@@ -559,15 +556,19 @@ public class PMemChannel extends FileChannel {
 
         if (!inPool) {
             Path p1 = Paths.get(pmemRootPathG, mpRelativePath);
-            info("Delete file " + p1.toString());
-            try {
-                Files.deleteIfExists(p1);
-            } catch (IOException e) {
-                error("delete file " + p1 + " error: ", e);
+            // delete pmem file only if pmem file does not equal filePath
+            if (p1.compareTo(filePath) != 0) {
+                info("Delete pmem file " + p1.toString());
+                try {
+                    Files.deleteIfExists(p1);
+                } catch (IOException e) {
+                    error("delete file " + p1 + " error: ", e);
+                }
             }
+
             if (deleteOrigFile) {
                 Path p2 = filePath;
-                info("Delete file " + p2.toString());
+                info("Delete id file " + p2.toString());
                 try {
                     Files.deleteIfExists(p2);
                 } catch (IOException e) {
@@ -664,6 +665,17 @@ public class PMemChannel extends FileChannel {
         Path fileName = file.getFileName();
         String fileNameStr = fileName == null ? "" : fileName.toString();
         return joinPath(parentStr, fileNameStr);
+    }
+
+    static long getCapacity(String path, long size) {
+        // use all the storage space if capacity is configured to -1
+        if (size == -1) {
+            log.info("PMem size is set to total capacity of device: " + size);
+            File file = new File(path);
+            size = file.getTotalSpace();
+        }
+
+        return size;
     }
 
     private MemoryPool memoryPool;

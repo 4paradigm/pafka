@@ -288,7 +288,7 @@ object Defaults {
   val PMemSize : Long = -1
   val LogChannelType = "file"
   val MigrateThreads = 1
-  val MigrateThreshold = 0.6
+  val MigrateThreshold = 0.5
   val HddPath = "/hdd"
 }
 

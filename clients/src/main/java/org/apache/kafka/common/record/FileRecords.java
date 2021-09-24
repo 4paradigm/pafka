@@ -304,6 +304,7 @@ public class FileRecords extends AbstractRecords implements Closeable {
 
     @Override
     public long writeTo(TransferableChannel destChannel, long offset, int length) throws IOException {
+        // TODO(zhanghao): what if channel already deleted
         long newSize = Math.min(channel.size(), end) - start;
         int oldSize = sizeInBytes();
         if (newSize < oldSize)
