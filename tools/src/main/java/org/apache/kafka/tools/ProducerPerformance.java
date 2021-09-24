@@ -31,6 +31,8 @@ import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Arrays;
+import java.io.FileNotFoundException;
+import java.io.IOException;
 
 import net.sourceforge.argparse4j.inf.MutuallyExclusiveGroup;
 import org.apache.kafka.clients.producer.Callback;
@@ -128,17 +130,9 @@ public class ProducerPerformance {
             long startMs = System.currentTimeMillis();
 
             ThroughputThrottler throttler = new ThroughputThrottler(throughput, startMs);
-            String throttlerPath = System.getenv("PRODUCER_THROTTLER_CONFIG");
-            MappedByteBuffer throttlerConfig = null;
-            if (throttlerPath != null) {
-                RandomAccessFile rd = new RandomAccessFile(throttlerPath, "r");
-                FileChannel fc = rd.getChannel();
-                throttlerConfig = fc.map(FileChannel.MapMode.READ_ONLY, 0, 8);
-                System.out.println("Use dynamic throttler @" + throttlerPath);
-            } else {
-                throughputLimitG = throttler.getTarget();
-                System.out.println("Producer with throughput limit: " + throughputLimitG);
-            }
+            throughputLimitG = throttler.getTarget();
+            System.out.println("Producer with throughput limit: " + throughputLimitG);
+            MappedByteBuffer throttlerConfig = createThrottlerConfig();
 
             int currentTransactionSize = 0;
             long transactionStartTime = 0;
@@ -149,7 +143,6 @@ public class ProducerPerformance {
                     transactionStartTime = System.currentTimeMillis();
                 }
 
-
                 if (payloadFilePath != null) {
                     payload = payloadByteList.get(random.nextInt(payloadByteList.size()));
                 }
@@ -158,29 +151,16 @@ public class ProducerPerformance {
                 long sendStartMs = System.currentTimeMillis();
                 Callback cb = stats.nextCompletion(sendStartMs, payload.length, stats);
                 producer.send(record, cb);
-
                 currentTransactionSize++;
                 if (transactionsEnabled && transactionDurationMs <= (sendStartMs - transactionStartTime)) {
                     producer.commitTransaction();
                     currentTransactionSize = 0;
                 }
 
-                if (throttlerConfig != null) {
-                    long throughputLimit = throttlerConfig.getLong();
-                    throughputLimitG = throughputLimit;
-                    if (throughputLimit != 0 && throughputLimit != throttler.getTarget()) {
-                        throttler.setTarget(throughputLimit, sendStartMs);
-                        sentSoFar = 0;
-                    }
-                    throttlerConfig.rewind();
-                } else {
-                    throughputLimitG = throttler.getTarget();
-                }
-
+                sentSoFar = updateThrottler(throttler, throttlerConfig, sentSoFar, sendStartMs);
                 if (throttler.shouldThrottle(sentSoFar, sendStartMs)) {
                     throttler.throttle();
                 }
-
                 sentSoFar++;
             }
 
@@ -215,6 +195,34 @@ public class ProducerPerformance {
             }
         }
 
+    }
+
+    private static MappedByteBuffer createThrottlerConfig() throws IOException, FileNotFoundException {
+        String throttlerPath = System.getenv("PRODUCER_THROTTLER_CONFIG");
+        MappedByteBuffer config = null;
+        if (throttlerPath != null) {
+            RandomAccessFile rd = new RandomAccessFile(throttlerPath, "r");
+            FileChannel fc = rd.getChannel();
+            config = fc.map(FileChannel.MapMode.READ_ONLY, 0, 8);
+            System.out.println("Use dynamic throttler @" + throttlerPath);
+        }
+
+        return config;
+    }
+
+    private static long updateThrottler(ThroughputThrottler throttler, MappedByteBuffer throttlerConfig, long sentSoFar, long sendStartMs) {
+        if (throttlerConfig != null) {
+            long throughputLimit = throttlerConfig.getLong();
+            throughputLimitG = throughputLimit;
+            if (throughputLimit != 0 && throughputLimit != throttler.getTarget()) {
+                throttler.setTarget(throughputLimit, sendStartMs);
+                sentSoFar = 0;
+            }
+            throttlerConfig.rewind();
+        } else {
+            throughputLimitG = throttler.getTarget();
+        }
+        return sentSoFar;
     }
 
     /** Get the command-line argument parser. */
