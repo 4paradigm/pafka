@@ -113,7 +113,8 @@ public class MixChannel extends FileChannel {
     private static PMemMigrator migrator = null;
     private final static Object GLOBAL_LOCK = new Object();
     private static Stat highStat = new Stat();
-    private static String lowBasePath = null;
+    private static String[] lowBasePath = null;
+    private static UnitedStorage lowStorage = null;
 
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
@@ -148,15 +149,18 @@ public class MixChannel extends FileChannel {
             }
         }
 
-        File lowBaseFile = new File(lowPath);
-        if (!lowBaseFile.exists()) {
-            if (!lowBaseFile.mkdirs()) {
-                log.error("Create directory " + lowBaseFile + " failed");
+        lowBasePath = lowPath.split(",");
+        for (String path : lowBasePath) {
+            File lowBaseFile = new File(path);
+            if (!lowBaseFile.exists()) {
+                if (!lowBaseFile.mkdirs()) {
+                    log.error("Create directory " + path + " failed");
+                }
             }
         }
+        lowStorage = new UnitedStorage(lowBasePath);
 
         metaStore = new RocksdbMetaStore(highPath + "/.meta");
-        lowBasePath = lowPath;
 
         // use all the storage space if capacity is configured to -1
         if (capacity == -1) {
@@ -383,12 +387,7 @@ public class MixChannel extends FileChannel {
                     ((PMemChannel) oldChannel).delete(false);
                     break;
                 case HDD:
-                    if (path.startsWith(lowBasePath)) {
-                        RandomAccessFile randomAccessFile = new RandomAccessFile(path.toFile(), "rw");
-                        randomAccessFile.setLength(0);
-                    } else {
-                        deleteFileChannel(path);
-                    }
+                    deleteFileChannel(path);
                     break;
                 default:
                     log.error("Not support " + oldMode);
@@ -687,27 +686,34 @@ public class MixChannel extends FileChannel {
     }
 
     static private FileChannel openFileChannel(Path file, long initFileSize, boolean preallocate, boolean mutable) throws IOException {
+        Path absPath = null;
         String rPath = toRelativePath(file);
-        Path realPath = new File(lowBasePath + "/" + rPath).toPath();
+
+        if (lowStorage.containsAbsolute(file.toString())) {
+            absPath = file;
+        } else {
+            absPath = new File(lowStorage.toAbsolute(rPath)).toPath();
+        }
+
         FileChannel ch = null;
         if (mutable) {
-            boolean fileAlreadyExists = realPath.toFile().exists();
+            boolean fileAlreadyExists = absPath.toFile().exists();
             if (fileAlreadyExists || !preallocate) {
-                return FileChannel.open(realPath, StandardOpenOption.CREATE, StandardOpenOption.READ,
+                return FileChannel.open(absPath, StandardOpenOption.CREATE, StandardOpenOption.READ,
                         StandardOpenOption.WRITE);
             } else {
-                Path parent = realPath.getParent();
+                Path parent = absPath.getParent();
                 if (parent != null && !parent.toFile().exists()) {
                     if (!parent.toFile().mkdirs()) {
                         log.error("Create directory " + parent + " failed");
                     }
                 }
-                RandomAccessFile randomAccessFile = new RandomAccessFile(realPath.toString(), "rw");
+                RandomAccessFile randomAccessFile = new RandomAccessFile(absPath.toString(), "rw");
                 randomAccessFile.setLength(initFileSize);
                 ch = randomAccessFile.getChannel();
             }
         } else {
-            ch = FileChannel.open(realPath);
+            ch = FileChannel.open(absPath);
         }
 
         // create an empty log file as Kafka will check its existence
@@ -724,15 +730,15 @@ public class MixChannel extends FileChannel {
     }
 
     static private void deleteFileChannel(Path file) throws IOException {
-        String rPath = toRelativePath(file);
-        rPath = lowBasePath + "/" + rPath;
-        Path lPath = new File(rPath).toPath();
-        Files.deleteIfExists(lPath);
-
-        if (lPath.compareTo(file) == 0) {
-            if (!file.toFile().createNewFile()) {
-                log.debug(file + " already exits");
-            }
+        if (lowStorage.containsAbsolute(file.toString())) {
+            RandomAccessFile randomAccessFile = new RandomAccessFile(file.toFile(), "rw");
+            randomAccessFile.setLength(0);
+            return;
+        } else {
+            String rPath = toRelativePath(file);
+            String absPath = lowStorage.toAbsolute(rPath);
+            Path lPath = new File(absPath).toPath();
+            Files.deleteIfExists(lPath);
         }
     }
 }
