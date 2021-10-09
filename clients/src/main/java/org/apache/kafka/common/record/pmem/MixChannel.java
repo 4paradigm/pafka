@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.common.record.pmem;
 
+import org.apache.kafka.common.record.pmem.UnitedStorage.SelectMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,8 +114,8 @@ public class MixChannel extends FileChannel {
     private static PMemMigrator migrator = null;
     private final static Object GLOBAL_LOCK = new Object();
     private static Stat highStat = new Stat();
-    private static String[] lowBasePath = null;
     private static UnitedStorage lowStorage = null;
+    private static UnitedStorage highStorage = null;
 
     private volatile Mode mode = defaultMode;
     private Status status = Status.INIT;
@@ -141,38 +142,19 @@ public class MixChannel extends FileChannel {
         return defaultMode;
     }
 
-    public static void init(String highPath, String lowPath, long capacity, double threshold, int migrateThreads) {
-        File highBaseFile = new File(highPath);
-        if (!highBaseFile.exists()) {
-            if (!highBaseFile.mkdirs()) {
-                log.error("Create directory " + highBaseFile + " failed");
-            }
-        }
+    public static void init(String highPaths, String lowPaths, String capacities, double threshold, int migrateThreads) {
+        highStorage = new UnitedStorage(highPaths, capacities);
+        long totalCapacity = highStorage.capacity();
+        highStat.setCapacity(totalCapacity);
+        log.info(defaultMode + " capacity is set to " + totalCapacity);
 
-        lowBasePath = lowPath.split(",");
-        for (String path : lowBasePath) {
-            File lowBaseFile = new File(path);
-            if (!lowBaseFile.exists()) {
-                if (!lowBaseFile.mkdirs()) {
-                    log.error("Create directory " + path + " failed");
-                }
-            }
-        }
-        lowStorage = new UnitedStorage(lowBasePath);
+        lowStorage = new UnitedStorage(lowPaths, SelectMode.SYS_FREE);
 
-        metaStore = new RocksdbMetaStore(highPath + "/.meta");
-
-        // use all the storage space if capacity is configured to -1
-        if (capacity == -1) {
-            File file = new File(highPath);
-            capacity = file.getTotalSpace();
-        }
-        highStat.setCapacity(capacity);
-        log.info(defaultMode + " capacity is set to " + capacity);
+        metaStore = new RocksdbMetaStore(highPaths.split(",")[0] + "/.meta");
 
         // start migration background threads
         if (threshold != -1) {
-            migrator = new PMemMigrator(migrateThreads, capacity, threshold);
+            migrator = new PMemMigrator(migrateThreads, totalCapacity, threshold);
             migrator.start();
         } else {
             log.info("Disable Migrator");

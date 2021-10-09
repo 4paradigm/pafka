@@ -32,7 +32,7 @@ import java.io.IOException;
 public class FileRecordsPMemTest extends FileRecordsTest {
     private static String pmemDir = "/tmp/pmem-FileRecordsPMemTest";
     private static String hddDir = "/tmp/hdd-FileRecordsPMemTest";
-    private static final long SIZE = 1024L * 1024 * 1024 * 10;
+    private static final String SIZE = "10737418240";
     private static final int INIT_SIZE = 10 * 1024 * 1024;
 
     @BeforeAll

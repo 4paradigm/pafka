@@ -82,9 +82,9 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 
 |Config|Default Value|Note|
 |------|-------------|----|
-|storage.pmem.path|/pmem|pmem mount path. first-layer storage <br /> (Only applicable if log.channel.type=mix or pmem)|
-|storage.pmem.size|-1|pmem capacity in bytes; -1 means use all the space <br />(Only applicable if log.channel.type=mix or pmem)|
-|storage.hdd.path|/hdd|hdd mount path. second-layer storage <br />(Only applicable if log.channel.type=mix)|
+|storage.pmem.paths|/pmem|pmem mount paths (separated by ,). first-layer storage <br /> (Only applicable if log.channel.type=mix or pmem)|
+|storage.pmem.sizes|-1|pmem capacities in bytes (separated by ,); -1 means use all the space <br />(Only applicable if log.channel.type=mix or pmem)|
+|storage.hdd.paths|/hdd|hdd mount paths (separated by ,). second-layer storage <br />(Only applicable if log.channel.type=mix)|
 |storage.migrate.threads|1|the number of threads used for migration <br />(Only applicable if log.channel.type=mix)|
 |storage.migrate.threshold|0.5|the threshold used to control when to start the migration. <br /> -1 means no migration. <br />(Only applicable if log.channel.type=mix)|
 |log.channel.type|file|log file channel type. <br /> Options: "file", "pmem", "mix".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage<br />"mix": use MixChannel, which will use pmem as the first-layer storage and hdd as the second-layer storage|
@@ -94,10 +94,10 @@ In order to support PMem storage, we add some more config fields to the Kafka [s
 
 Sample config in config/server.properties is as follows:
 
-    log.dirs=/pmem/kafka-pool
-    storage.pmem.path=/pmem/kafka
-    storage.pmem.size=600000000000
-    storage.hdd.path=/hdd/kafka-pool
+    log.dirs=/pmem/pafka
+    storage.pmem.paths=/pmem/pafka-pool
+    storage.pmem.sizes=600000000000
+    storage.hdd.paths=/hdd/pafka-pool
     log.pmem.pool.ratio=0.8
     log.channel.type=mix
     # log.preallocate have to set to true if pmem is used

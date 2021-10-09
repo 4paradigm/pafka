@@ -803,7 +803,7 @@ class KafkaConfigTest {
         // PMem config
         case KafkaConfig.PMemPathProp => // ignore
         case KafkaConfig.PMemLogPoolRatioProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
-        case KafkaConfig.PMemSizeProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
+        case KafkaConfig.PMemSizeProp => // ignore
         case KafkaConfig.LogChannelTypeProp => // ignore
         case KafkaConfig.MigrateThreadsProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
         case KafkaConfig.MigrateThresholdProp => assertPropertyInvalid(baseProperties, name, "not_a_number")

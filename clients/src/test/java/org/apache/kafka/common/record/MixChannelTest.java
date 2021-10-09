@@ -40,7 +40,7 @@ public class MixChannelTest {
     private static String pmemPath;
     private static String hddPath;
     private static String relativePathG;
-    private static final long SIZE = 10L * 1024 * 1024;
+    private static final String SIZE = "10485760";
     private static final int BLOCK_SIZE = 1024 * 1024;
 
     @BeforeAll

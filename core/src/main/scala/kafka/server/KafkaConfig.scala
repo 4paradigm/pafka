@@ -290,7 +290,7 @@ object Defaults {
   /** ********* PMem storage Configuration **************/
   val PMemPath = "/pmem"
   val PMemLogPoolRatio = 0.8
-  val PMemSize : Long = -1
+  val PMemSize : String = "-1"
   val LogChannelType = "file"
   val MigrateThreads = 1
   val MigrateThreshold = 0.5
@@ -618,13 +618,13 @@ object KafkaConfig {
   val PasswordEncoderIterationsProp =  "password.encoder.iterations"
 
   /** ********* pmem-related configs *********/
-  val PMemPathProp = "storage.pmem.path"
-  val PMemSizeProp = "storage.pmem.size"
+  val PMemPathProp = "storage.pmem.paths"
+  val PMemSizeProp = "storage.pmem.sizes"
   val PMemLogPoolRatioProp = "log.pmem.pool.ratio"
   val LogChannelTypeProp = "log.channel.type"
   val MigrateThreadsProp = "storage.migrate.threads"
   val MigrateThresholdProp = "storage.migrate.threshold"
-  val HddPathProp = "storage.hdd.path"
+  val HddPathProp = "storage.hdd.paths"
 
   /* Documentation */
   /** ********* Zookeeper Configuration ***********/
@@ -1042,13 +1042,13 @@ object KafkaConfig {
   val PasswordEncoderIterationsDoc =  "The iteration count used for encoding dynamically configured passwords."
 
    /** ********* PMem storage config *********/
-   val PMemPathDoc = s"PMem device mount location. Only used if $LogChannelTypeProp == pmem"
+   val PMemPathDoc = s"PMem device mount location (separated by ','). Only used if $LogChannelTypeProp == pmem"
    val PMemLogPoolRatioDoc = s"PMem log pool proportion of total pmem size. Only used if $LogChannelTypeProp == pmem"
-   val PMemSizeDoc = s"PMem capacity. Only used if $LogChannelTypeProp == pmem"
+   val PMemSizeDoc = s"PMem capacity (separated by ','). Only used if $LogChannelTypeProp == pmem"
    val LogChannelTypeDoc = "Log channel type (e.g., file, pmem)"
    val MigrateThreadsDoc = s"The number of threads used to do migration between different storage layers"
    val MigrateThresholdDoc = s"The usage percentage of high layer storage, until which we start to do migration"
-   val HddPathDoc = s"HDD location"
+   val HddPathDoc = s"HDD location (separated by ',')"
 
   @nowarn("cat=deprecation")
   private[server] val configDef = {
@@ -1347,7 +1347,7 @@ object KafkaConfig {
       /** ********* PMmem storage config *********/
       .define(PMemPathProp, STRING, Defaults.PMemPath, MEDIUM, PMemPathDoc)
       .define(PMemLogPoolRatioProp, DOUBLE, Defaults.PMemLogPoolRatio, MEDIUM, PMemLogPoolRatioDoc)
-      .define(PMemSizeProp, LONG, Defaults.PMemSize, MEDIUM, PMemSizeDoc)
+      .define(PMemSizeProp, STRING, Defaults.PMemSize, MEDIUM, PMemSizeDoc)
       .define(LogChannelTypeProp, STRING, Defaults.LogChannelType, MEDIUM, LogChannelTypeDoc)
       .define(MigrateThreadsProp, INT, Defaults.MigrateThreads, MEDIUM, MigrateThreadsDoc)
       .define(MigrateThresholdProp, DOUBLE, Defaults.MigrateThreshold, MEDIUM, MigrateThresholdDoc)
@@ -1818,7 +1818,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
   /** ********* PMem storage Configuration **************/
   val pmemPath = getString(KafkaConfig.PMemPathProp)
   val pmemLogPoolRatio = getDouble(KafkaConfig.PMemLogPoolRatioProp)
-  val pmemSize = getLong(KafkaConfig.PMemSizeProp)
+  val pmemSize = getString(KafkaConfig.PMemSizeProp)
   val logChannelType = getString(KafkaConfig.LogChannelTypeProp)
   val migrateThreads = getInt(KafkaConfig.MigrateThreadsProp)
   val migrateThreshold = getDouble(KafkaConfig.MigrateThresholdProp)
