@@ -240,6 +240,10 @@ public class PMemChannel extends FileChannel {
         // already allocate, recover
         if (mpRelativePath != null && !mpRelativePath.isEmpty()) {
             String absPath = storage.toAbsolute(mpRelativePath);
+            // load the buffer size
+            channelSize = metaStore.getInt(sizeKey);
+            info("recover MemoryPool (size: " + channelSize + ") @ " + absPath);
+
             memoryPool = MemoryPool.openPool(absPath);
             boolean inPool = mpRelativePath.startsWith(POOL_ENTRY_PREFIX);
             // if inPool, storage already take the usage during initialization
@@ -247,8 +251,6 @@ public class PMemChannel extends FileChannel {
                 storage.take(absPath, memoryPool.size());
             }
 
-            // load the buffer size
-            channelSize = metaStore.getInt(sizeKey);
             if (channelSize == MetaStore.NOT_EXIST_INT) {
                 channelSize = (int) memoryPool.size();
             }
@@ -257,7 +259,6 @@ public class PMemChannel extends FileChannel {
                 error("initSize not 0 for recovered channel. initSize = " + initSize + ", buf.size = " + memoryPool.size());
                 truncate(initSize);
             }
-            info("recover MemoryPool (size: " + channelSize + ") @ " + absPath);
         } else {  // allocate new block
             if (initSize == 0) {
                 String msg = "PMemChannel initSize 0 (have to set log.preallocate=true)";
@@ -565,15 +566,15 @@ public class PMemChannel extends FileChannel {
                     error("reset file error", e);
                 }
             }
+        }
 
-            if (deleteOrigFile) {
-                Path p2 = filePath;
-                info("Delete id file " + p2.toString());
-                try {
-                    Files.deleteIfExists(p2);
-                } catch (IOException e) {
-                    error("delete file " + p2 + " error: ", e);
-                }
+        if (deleteOrigFile) {
+            Path p2 = filePath;
+            info("Delete id file " + p2.toString());
+            try {
+                Files.deleteIfExists(p2);
+            } catch (IOException e) {
+                error("delete file " + p2 + " error: ", e);
             }
         }
         memoryPool = null;

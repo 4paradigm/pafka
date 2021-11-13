@@ -149,16 +149,16 @@ def config_topic(topic_num, brokers, topic_config):
             # print("cmd2:", out, err)
 
 
-def control_clients(hosts, threads, throughput=0, init=False):
+def control_clients(hosts, threads, throughput=0, init=False, config="/tmp/producer-throttler"):
     print("Throttle throughput = {} records/s".format(throughput))
 
     bin = PAFKA_HOME
     throughput_per_thread = int(throughput / threads / len(hosts))
     for host in hosts:
         if init:
-            cmd='ssh {} "cd {}; python3 ./bin/throttler.py --action init"'.format(host, bin)
+            cmd='ssh {} "cd {}; python3 ./bin/throttler.py --action init --config {}"'.format(host, bin, config)
         else:
-            cmd='ssh {} "cd {}; python3 ./bin/throttler.py --action set --throughput {}"'.format(host, bin, throughput_per_thread)
+            cmd='ssh {} "cd {}; python3 ./bin/throttler.py --action set --throughput {} --config {}"'.format(host, bin, throughput_per_thread, config)
 
         out, err = execute_cmd(cmd)
 
@@ -244,7 +244,7 @@ def parse_consumer(line):
 
 
 class Throttler (threading.Thread):
-    def __init__(self, hosts: list, threads: int, dynamic_thr: str, sleept=10, steps=5, control_type="sleep", name="Throttler", only_min_max=False):
+    def __init__(self, hosts: list, threads: int, dynamic_thr: str, sleept=10, steps=5, control_type="sleep", name="Throttler", only_min_max=False, throttler_config="/tmp/producer-throttler"):
         threading.Thread.__init__(self)
         self.name = name
         toks = dynamic_thr.split(":")
@@ -259,17 +259,20 @@ class Throttler (threading.Thread):
         self.control_type = control_type
         self.stopped = False
         self.only_min_max = only_min_max
+        self.throttler_config = throttler_config
 
     def run(self):
         print("Starting " + self.name)
         factor = float(self.max_thr + self.avg_thr) / (self.avg_thr + self.min_thr)
         run_steps = []
+        delay_high = 20
+        delay_low = 20
 
         if self.only_min_max:
-            run_steps = [self.min_thr, self.max_thr]
+            run_steps = [self.max_thr, self.min_thr]
             factor = float(self.max_thr - self.avg_thr) / (self.avg_thr - self.min_thr)
-            sleep_low = factor * self.sleept
-            sleep_high = self.sleept
+            sleep_low = factor * self.sleept - delay_low
+            sleep_high = self.sleept - delay_high
         else:
             if self.control_type == "step":
                 steps_high = self.steps
@@ -321,8 +324,9 @@ class Throttler (threading.Thread):
             # random.shuffle(run_steps)
 
         print("Run steps: {}".format(run_steps))
+        print("Sleep windows: low: {}, high: {}".format(sleep_low, sleep_high))
 
-        control_clients(self.hosts, self.threads, self.min_thr)
+        control_clients(self.hosts, self.threads, self.min_thr, config=self.throttler_config)
         time.sleep(10)
 
         count = 0
@@ -333,7 +337,7 @@ class Throttler (threading.Thread):
                 else:
                     sleep_curr = sleep_high
 
-                control_clients(self.hosts, self.threads, thr)
+                control_clients(self.hosts, self.threads, thr, config=self.throttler_config)
                 time.sleep(sleep_curr)
 
         print("Exiting " + self.name)
@@ -373,8 +377,8 @@ if __name__ == "__main__":
     cum_records = 0
 
     if args.use_dynamic and args.type == "producer":
-        control_clients(hosts=hosts, threads=threads, init=True)
-        throttler = Throttler(hosts=hosts, threads=threads, dynamic_thr=args.dynamic, sleept=args.sleept, steps=args.steps, control_type=args.control_type, only_min_max=args.only_min_max)
+        control_clients(hosts=hosts, threads=threads, init=True, config=args.throttler_config)
+        throttler = Throttler(hosts=hosts, threads=threads, dynamic_thr=args.dynamic, sleept=args.sleept, steps=args.steps, control_type=args.control_type, only_min_max=args.only_min_max, throttler_config=args.throttler_config)
         throttler.daemon = True
         throttler.start()
 

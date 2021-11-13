@@ -14,11 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.kafka.common.record;
 
 import org.apache.kafka.common.record.pmem.MixChannel;
 import org.apache.kafka.common.record.pmem.PMemChannel;
-import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.common.record.pmem.MixChannel.Mode;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -34,46 +35,54 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class MixChannelTest {
-    private static MixChannel channelG;
-    private static File channelPath;
-    private static File parent;
-    private static String pmemPath;
-    private static String hddPath;
-    private static String relativePathG;
-    private static final String SIZE = "10485760";
-    private static final int BLOCK_SIZE = 1024 * 1024;
+    protected static File parent;
+    protected static String firstLayerPath;
+    protected static String secondLayerPath;
+    protected static final int SIZE = 10485760;
+    protected static final String TOPIC = "topic-test";
+    protected static final int BLOCK_SIZE = 1024 * 1024;
+    protected static Mode firstLayerMode = Mode.PMEM;
+    protected static Mode secondLayerMode = Mode.HDD;
 
     @BeforeAll
     public static void setup() throws IOException {
         parent = tempDirectory();
-        pmemPath = parent.toString() + "/pmem";
-        hddPath = parent.toString() + "/hdd";
-        channelPath = new File(hddPath + "/topic-test/00001.log");
-        relativePathG = Paths.get(parent.getName(), channelPath.getName()).toString();
+        firstLayerPath = parent.toString() + "/pmem";
+        secondLayerPath = parent.toString() + "/hdd";
 
-        MixChannel.init(pmemPath, hddPath, SIZE, 0.9, 1);
-        channelG = new MixChannel(channelPath.toPath(), BLOCK_SIZE, true, true);
+        File topicDir = new File(secondLayerPath + "/" + TOPIC);
+        assertTrue(topicDir.mkdirs());
+
+        MixChannel.init(firstLayerPath, secondLayerPath, Integer.toString(SIZE), 0.9, 1);
+        PMemChannel.init(firstLayerPath, Integer.toString(SIZE), BLOCK_SIZE, 0.01);
     }
 
     @AfterAll
     public static void cleanup() throws IOException, InterruptedException {
-        channelG.delete();
         MixChannel.stop();
-        Utils.delete(new File(MixChannel.getMetaStore().getPath()));
     }
 
     @Test
-    public void testCreateDeleteChannel() throws IOException {
-        File file = new File(parent.getPath() + "/topic-test/00002.log");
+    public void testCreateDeleteFirstLayerChannel() throws IOException {
+        testCreateDeleteChannel(BLOCK_SIZE, firstLayerMode);
+    }
+
+    @Test
+    public void testCreateDeleteSecondLayerChannel() throws IOException {
+        testCreateDeleteChannel(SIZE * 2, secondLayerMode);
+    }
+
+    public void testCreateDeleteChannel(int channelSize, Mode expectedMode) throws IOException {
+        File file = new File(secondLayerPath + "/" + TOPIC + "/00001.log");
         String relativePath = Paths.get(file.getParentFile().getName(), file.getName()).toString();
-        MixChannel channel = new MixChannel(file.toPath(), BLOCK_SIZE, true, true);
+        MixChannel channel = MixChannel.open(file.toPath(), channelSize, true, true);
 
         String[] toks = relativePath.split("/");
         long id = Long.parseLong(toks[1].split("\\.")[0]);
         assertTrue(file.exists());
         assertEquals(toks[0], channel.getNamespace());
         assertEquals(id, channel.getId());
-        assertEquals(MixChannel.Mode.HDD, channel.getMode());
+        assertEquals(expectedMode, channel.getMode());
         assertEquals(MixChannel.Status.INIT, channel.getStatus());
 
         channel.delete();
@@ -81,51 +90,64 @@ public class MixChannelTest {
     }
 
     @Test
-    public void testWriteReadChannel() throws IOException {
+    public void testWriteReadFirstLayerChannel() throws IOException {
+        testWriteReadChannel(BLOCK_SIZE, firstLayerMode);
+    }
+
+    @Test
+    public void testWriteReadSecondLayerChannel() throws IOException {
+        testWriteReadChannel(SIZE * 2, secondLayerMode);
+    }
+
+    public void testWriteReadChannel(int channelSIze, Mode expectedMode) throws IOException {
+        File channelPath = new File(secondLayerPath + "/" + TOPIC + "/00002.log");
+        MixChannel channel = MixChannel.open(channelPath.toPath(), channelSIze, true, true);
+        assertEquals(expectedMode, channel.getMode());
+
         int s = 1024000;
         ByteBuffer buf = ByteBuffer.allocate(s);
         for (int i = 0; i < s; i++) {
             buf.put(i, (byte) (i % 128));
         }
-        assertEquals(channelG.write(buf), s);
+        assertEquals(channel.write(buf), s);
 
         ByteBuffer rbuf = ByteBuffer.allocate(s);
-        int readS = channelG.read(rbuf, 0);
+        int readS = channel.read(rbuf, 0);
         assertEquals(s, readS);
         for (int i = 0; i < s; i++) {
             assertEquals((byte) (i % 128), rbuf.get(i));
         }
+
+        channel.delete();
     }
 
     @Test
     public void testSetMode() throws IOException {
-        String pmemPath = parent.toString() + "/pmem";
-        PMemChannel.init(pmemPath, SIZE, BLOCK_SIZE, 0.01);
-        File file = new File(hddPath + "/topic-test/00003.log");
+        File file = new File(secondLayerPath + "/" + TOPIC + "/00003.log");
         String relativePath = Paths.get(file.getParentFile().getName(), file.getName()).toString();
-        MixChannel channel = new MixChannel(file.toPath(), BLOCK_SIZE, true, true);
+        MixChannel channel = MixChannel.open(file.toPath(), BLOCK_SIZE, true, true);
 
         String[] toks = relativePath.split("/");
         long id = Long.parseLong(toks[1].split("\\.")[0]);
         assertTrue(file.exists());
         assertEquals(toks[0], channel.getNamespace());
         assertEquals(id, channel.getId());
-        assertEquals(MixChannel.Mode.PMEM, channel.getMode());
+        assertEquals(firstLayerMode, channel.getMode());
         assertEquals(MixChannel.Status.INIT, channel.getStatus());
         assertEquals(file.length(), 0);
 
-        // pmem file
-        File pFile = new File(pmemPath + "/" + relativePath);
+        // first layer file
+        File pFile = new File(firstLayerPath + "/" + relativePath);
         assertTrue(pFile.exists());
         assertEquals(BLOCK_SIZE, pFile.length());
 
-        channel.setMode(MixChannel.Mode.HDD);
-        assertEquals(channel.getMode(), MixChannel.Mode.HDD);
+        channel.setMode(secondLayerMode);
+        assertEquals(channel.getMode(), secondLayerMode);
         // id file
         assertTrue(file.exists());
         assertEquals(BLOCK_SIZE, file.length());
 
-        // pmem file
+        // first layer file file
         assertFalse(pFile.exists());
     }
 }

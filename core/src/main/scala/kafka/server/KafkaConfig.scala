@@ -288,13 +288,14 @@ object Defaults {
   val QuorumRetryBackoffMs = RaftConfig.DEFAULT_QUORUM_RETRY_BACKOFF_MS
 
   /** ********* PMem storage Configuration **************/
-  val PMemPath = "/pmem"
+  val FirstTierPath = "/pmem"
+  val FirstTierSize : String = "-1"
   val PMemLogPoolRatio = 0.8
-  val PMemSize : String = "-1"
   val LogChannelType = "file"
   val MigrateThreads = 1
   val MigrateThreshold = 0.5
-  val HddPath = "/hdd"
+  val SecondTierPath = "/hdd"
+  val StorageTiers = "PMEM"
 }
 
 object KafkaConfig {
@@ -618,13 +619,14 @@ object KafkaConfig {
   val PasswordEncoderIterationsProp =  "password.encoder.iterations"
 
   /** ********* pmem-related configs *********/
-  val PMemPathProp = "storage.pmem.paths"
-  val PMemSizeProp = "storage.pmem.sizes"
+  val FirstTierPathProp = "storage.tiers.first.paths"
+  val FirstTierSizeProp = "storage.tiers.first.sizes"
   val PMemLogPoolRatioProp = "log.pmem.pool.ratio"
   val LogChannelTypeProp = "log.channel.type"
   val MigrateThreadsProp = "storage.migrate.threads"
   val MigrateThresholdProp = "storage.migrate.threshold"
-  val HddPathProp = "storage.hdd.paths"
+  val SecondTierPathProp = "storage.tiers.second.paths"
+  val StorageTiersProp = "storage.tiers.types"
 
   /* Documentation */
   /** ********* Zookeeper Configuration ***********/
@@ -1042,13 +1044,14 @@ object KafkaConfig {
   val PasswordEncoderIterationsDoc =  "The iteration count used for encoding dynamically configured passwords."
 
    /** ********* PMem storage config *********/
-   val PMemPathDoc = s"PMem device mount location (separated by ','). Only used if $LogChannelTypeProp == pmem"
-   val PMemLogPoolRatioDoc = s"PMem log pool proportion of total pmem size. Only used if $LogChannelTypeProp == pmem"
-   val PMemSizeDoc = s"PMem capacity (separated by ','). Only used if $LogChannelTypeProp == pmem"
-   val LogChannelTypeDoc = "Log channel type (e.g., file, pmem)"
+   val FirstTierPathDoc = s"First-tier paths (separated by ','). Only used if $LogChannelTypeProp == pmem or tiered"
+   val FirstTierSizeDoc = s"First-tier capacities (separated by ','). Only used if $LogChannelTypeProp == pmem or tiered"
+   val PMemLogPoolRatioDoc = s"PMem log pool proportion of total pmem size. Only used if $LogChannelTypeProp == pmem OR first-tier is PMEM"
+   val LogChannelTypeDoc = "Log channel type (e.g., file, pmem, tiered)"
    val MigrateThreadsDoc = s"The number of threads used to do migration between different storage layers"
    val MigrateThresholdDoc = s"The usage percentage of high layer storage, until which we start to do migration"
-   val HddPathDoc = s"HDD location (separated by ',')"
+   val SecondTierPathDoc = s"Second-tier paths (separated by ',')"
+   val StorageTiersDoc = s"Storage types for every tiers (seperated by ',')"
 
   @nowarn("cat=deprecation")
   private[server] val configDef = {
@@ -1344,14 +1347,15 @@ object KafkaConfig {
       .define(RaftConfig.QUORUM_REQUEST_TIMEOUT_MS_CONFIG, INT, Defaults.QuorumRequestTimeoutMs, null, MEDIUM, RaftConfig.QUORUM_REQUEST_TIMEOUT_MS_DOC)
       .define(RaftConfig.QUORUM_RETRY_BACKOFF_MS_CONFIG, INT, Defaults.QuorumRetryBackoffMs, null, LOW, RaftConfig.QUORUM_RETRY_BACKOFF_MS_DOC)
 
-      /** ********* PMmem storage config *********/
-      .define(PMemPathProp, STRING, Defaults.PMemPath, MEDIUM, PMemPathDoc)
+      /** ********* PMem storage config *********/
+      .define(FirstTierPathProp, STRING, Defaults.FirstTierPath, MEDIUM, FirstTierPathDoc)
       .define(PMemLogPoolRatioProp, DOUBLE, Defaults.PMemLogPoolRatio, MEDIUM, PMemLogPoolRatioDoc)
-      .define(PMemSizeProp, STRING, Defaults.PMemSize, MEDIUM, PMemSizeDoc)
+      .define(FirstTierSizeProp, STRING, Defaults.FirstTierSize, MEDIUM, FirstTierSizeDoc)
       .define(LogChannelTypeProp, STRING, Defaults.LogChannelType, MEDIUM, LogChannelTypeDoc)
       .define(MigrateThreadsProp, INT, Defaults.MigrateThreads, MEDIUM, MigrateThreadsDoc)
       .define(MigrateThresholdProp, DOUBLE, Defaults.MigrateThreshold, MEDIUM, MigrateThresholdDoc)
-      .define(HddPathProp, STRING, Defaults.HddPath, MEDIUM, HddPathDoc)
+      .define(SecondTierPathProp, STRING, Defaults.SecondTierPath, MEDIUM, SecondTierPathDoc)
+      .define(StorageTiersProp, STRING, Defaults.StorageTiers, MEDIUM, StorageTiersDoc)
   }
 
   /** ********* Remote Log Management Configuration *********/
@@ -1816,13 +1820,14 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean, dynamicConfigO
   val quorumRetryBackoffMs = getInt(RaftConfig.QUORUM_RETRY_BACKOFF_MS_CONFIG)
 
   /** ********* PMem storage Configuration **************/
-  val pmemPath = getString(KafkaConfig.PMemPathProp)
+  val firstTierPath = getString(KafkaConfig.FirstTierPathProp)
+  val firstTierSize = getString(KafkaConfig.FirstTierSizeProp)
   val pmemLogPoolRatio = getDouble(KafkaConfig.PMemLogPoolRatioProp)
-  val pmemSize = getString(KafkaConfig.PMemSizeProp)
   val logChannelType = getString(KafkaConfig.LogChannelTypeProp)
   val migrateThreads = getInt(KafkaConfig.MigrateThreadsProp)
   val migrateThreshold = getDouble(KafkaConfig.MigrateThresholdProp)
-  val hddPath = getString(KafkaConfig.HddPathProp)
+  val secondTierPath = getString(KafkaConfig.SecondTierPathProp)
+  val storageTiers = getString(KafkaConfig.StorageTiersProp)
 
   def addReconfigurable(reconfigurable: Reconfigurable): Unit = {
     dynamicConfig.addReconfigurable(reconfigurable)

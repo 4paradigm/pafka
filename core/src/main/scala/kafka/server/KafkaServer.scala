@@ -195,18 +195,27 @@ class KafkaServer(
         _brokerState = BrokerState.STARTING
 
         // pre-allocate heap
-        if (config.logChannelType.compareToIgnoreCase("pmem") == 0 || config.logChannelType.compareToIgnoreCase("mix") == 0) {
-          val pmemPath = config.pmemPath
-          val size = config.pmemSize
+        val storageTiers = config.storageTiers.split(",")
+        if (config.logChannelType.compareToIgnoreCase(MixChannel.PMEM_TYPE) == 0
+            || (config.logChannelType.compareToIgnoreCase(MixChannel.TIERED_TYPE) == 0 && MixChannel.Mode.fromString(storageTiers(0)) == MixChannel.Mode.PMEM)) {
+          val pmemPath = config.firstTierPath
+          val size = config.firstTierSize
           val logSegmentBytes = config.logSegmentBytes.intValue()
           PMemChannel.init(pmemPath, size, logSegmentBytes, config.pmemLogPoolRatio.doubleValue())
+        }
 
-          if (config.logChannelType.compareToIgnoreCase("mix") == 0) {
-            val migrateThreshold = config.migrateThreshold.doubleValue()
-            val migrateThreads = config.migrateThreads.intValue()
-            val hddPath = config.hddPath
-            MixChannel.init(pmemPath, hddPath, size, migrateThreshold, migrateThreads)
+
+        if (config.logChannelType.compareToIgnoreCase(MixChannel.TIERED_TYPE) == 0) {
+          if (storageTiers.length != 2) {
+            throw new IllegalArgumentException(KafkaConfig.StorageTiersProp + " config errors")
           }
+
+          val migrateThreshold = config.migrateThreshold.doubleValue()
+          val migrateThreads = config.migrateThreads.intValue()
+          val firstTierPath = config.firstTierPath
+          val size = config.firstTierSize
+          val secondTierPath = config.secondTierPath
+          MixChannel.init(firstTierPath, storageTiers(0), secondTierPath, storageTiers(1), size, migrateThreshold, migrateThreads)
         }
 
         /* setup zookeeper */
@@ -753,7 +762,7 @@ class KafkaServer(
         shutdownLatch.countDown()
 
         // close PMemHeap
-        if (config.logChannelType.compareToIgnoreCase("mix") == 0) {
+        if (config.logChannelType.compareToIgnoreCase(MixChannel.TIERED_TYPE) == 0) {
           MixChannel.stop();
         }
 

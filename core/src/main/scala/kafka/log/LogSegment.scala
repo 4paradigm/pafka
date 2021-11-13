@@ -30,6 +30,7 @@ import org.apache.kafka.common.errors.CorruptRecordException
 import org.apache.kafka.common.record.FileRecords.{LogOffsetPosition, TimestampAndOffset, FileChannelType}
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.utils.{BufferSupplier, Time}
+import org.apache.kafka.common.record.pmem.MixChannel
 
 import scala.jdk.CollectionConverters._
 import scala.math._
@@ -657,9 +658,9 @@ object LogSegment {
            initFileSize: Int = 0, preallocate: Boolean = false, fileSuffix: String = ""): LogSegment = {
     val maxIndexSize = config.maxIndexSize
     var channelType = FileChannelType.FILE
-    if (config.channelType.compareToIgnoreCase("pmem") == 0) {
+    if (config.channelType.compareToIgnoreCase(MixChannel.PMEM_TYPE) == 0) {
       channelType = FileChannelType.PMEM;
-    } else if (config.channelType.compareToIgnoreCase("mix") == 0) {
+    } else if (config.channelType.compareToIgnoreCase(MixChannel.TIERED_TYPE) == 0) {
       channelType = FileChannelType.MIX;
     }
 

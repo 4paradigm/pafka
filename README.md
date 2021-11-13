@@ -33,7 +33,7 @@ For the complete documentation of Kafka, refer to [here](README.kafka.md).
 The easiest way to try Pafka is to use the docker image: https://hub.docker.com/r/4pdopensource/pafka-dev
 
 ```
-docker run -it -v $YOUR_PMEM_PATH:/mnt/mem 4pdopensource/pafka-dev bash
+docker run -it 4pdopensource/pafka-dev bash
 ```
 
 where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host system.
@@ -78,30 +78,48 @@ To verify the correctness, you can use any file systems with normal hard disks. 
 
 #### 3.3.2. Config
 
-In order to support PMem storage, we add some more config fields to the Kafka [server config](config/server.properties). 
+In order to support tiered storage, we add some more config fields to the Kafka [server config](config/server.properties). 
 
 |Config|Default Value|Note|
 |------|-------------|----|
-|storage.pmem.paths|/pmem|pmem mount paths (separated by ,). first-layer storage <br /> (Only applicable if log.channel.type=mix or pmem)|
-|storage.pmem.sizes|-1|pmem capacities in bytes (separated by ,); -1 means use all the space <br />(Only applicable if log.channel.type=mix or pmem)|
-|storage.hdd.paths|/hdd|hdd mount paths (separated by ,). second-layer storage <br />(Only applicable if log.channel.type=mix)|
-|storage.migrate.threads|1|the number of threads used for migration <br />(Only applicable if log.channel.type=mix)|
-|storage.migrate.threshold|0.5|the threshold used to control when to start the migration. <br /> -1 means no migration. <br />(Only applicable if log.channel.type=mix)|
-|log.channel.type|file|log file channel type. <br /> Options: "file", "pmem", "mix".<br />"file": use normal FileChannel as vanilla Kafka does <br />"pmem": use PMemChannel, which will use pmem as the log storage<br />"mix": use MixChannel, which will use pmem as the first-layer storage and hdd as the second-layer storage|
-|log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.<br />(Only applicable if log.channel.type=mix or pmem)|
+|log.channel.type|file|log file channel type. <br /> Options: "file", "pmem", "tiered".<br />"file": use normal file as vanilla Kafka does <br />"pmem": use pmem as the log storage<br />"tiered": use tiered storage|
+|storage.tiers.types|PMEM,HDD|the storage types for each layers (separated by ,). <br /> Available types are PMEM, NVME, SSD, HDD.|
+|storage.tiers.first.paths|/pmem|first-layer storage paths (separated by ,). <br /> (Only applicable if log.channel.type=tiered or pmem)|
+|storage.tiers.first.sizes|-1|first-layer storage capacities in bytes (separated by ,); -1 means use all the space <br />(Only applicable if log.channel.type=tiered or pmem)|
+|storage.tiers.second.paths|/hdd|second-layer storage paths (separated by ,) <br />(Only applicable if log.channel.type=tiered)|
+|storage.migrate.threshold|0.5|the threshold used to control when to start the migration. <br /> -1 means no migration. <br />(Only applicable if log.channel.type=tiered)|
+|storage.migrate.threads|1|the number of threads used for migration <br />(Only applicable if log.channel.type=tiered)|
+|log.pmem.pool.ratio|0.8|A pool of log segments will be pre-allocated. This is the proportion of total pmem size. Pre-allocation will increase the first startup time, but can eliminate the dynamic allocation cost when serving requests.<br />(Only applicable if we are using pmem as the first-layer storage)|
 
 > :warning: **`log.preallocate` has to be set to `true` if pmem is used, as PMem MemoryBlock does not support `append`-like operations.**
 
 Sample config in config/server.properties is as follows:
 
-    log.dirs=/pmem/pafka
-    storage.pmem.paths=/pmem/pafka-pool
-    storage.pmem.sizes=600000000000
-    storage.hdd.paths=/hdd/pafka-pool
+    ######## start of tiered storage config ########
+
+    # log file channel type; Options: "file", "pmem", "tiered".
+    # if "file": use normal file as vanilla Kafka does. Following configs are not applicable.
+    log.channel.type=file
+    # the storage types for each layers (separated by ,)
+    storage.tiers.types=PMEM,HDD
+    # first-layer storage paths (separated by ,)
+    storage.tiers.first.paths=/pmem
+    # first-layer storage capacities in bytes (separated by ,); -1 means use all the space
+    storage.tiers.first.sizes=-1
+    # second-layer storage paths (separated by ,)
+    storage.tiers.second.paths=/hdd
+    # threshold to control when to start the migration; -1 means no migration.
+    storage.migrate.threshold=0.5
+    # migration threads
+    storage.migrate.threads=1
+
+    # pmem-specific config
+    # pre-allocated pool ratio
     log.pmem.pool.ratio=0.8
-    log.channel.type=mix
     # log.preallocate have to set to true if pmem is used
     log.preallocate=true
+
+    ######## end of tiered storage config ########
 
 #### 3.3.3. Start Pafka
 Follow instructions in https://kafka.apache.org/quickstart. Basically:
@@ -160,8 +178,7 @@ We've tested on Java 8, Java 11 and Java 15.
    > WARNING: All illegal access operations will be denied in a future release
 
 
-- Currently, only the log files are stored in PMem, while the indexes are still kept as normal files, as we do not see much performance gain if we move the indexes to PMem.
-- Release `v0.1.x` uses PMem as the only storage device, which may limit the use for some scenarios that require a large capacity for log storage. Release `v0.2.0` addresses this issue by introducing a tiered storage strategy.
+- Currently, only the log files are stored in the tiered storage, while the indexes are still kept as normal files, as we do not see much performance gain if we move the indexes to fast storage.
 
 
 ## 5. Roadmap
@@ -170,7 +187,7 @@ We've tested on Java 8, Java 11 and Java 15.
 |---|---|---|
 |v0.1.1|Released|- Use PMem for data storage <br /> - Significant performance boost compared with Kafka |
 |v0.2.0|Released|- A two-layered storage strategy to utilize the total capacity of all storage devices while maintaining the efficiency by our cold-hot data migration algorithms<br /> - Further PMem performance improvement by using `libpmem` |
-|v0.3.0|Q4 2021|- Configurable storage devices for both 1st and 2nd layers, to support using large SSD as the first layer |
+|v0.3.0|Released|- Configurable storage devices for both 1st and 2nd layers, to support using large SSD/NVMe as the first layer |
 
 ## 6. Community
 

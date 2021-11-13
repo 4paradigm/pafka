@@ -801,13 +801,14 @@ class KafkaConfigTest {
         case RaftConfig.QUORUM_RETRY_BACKOFF_MS_CONFIG => assertPropertyInvalid(baseProperties, name, "not_a_number")
 
         // PMem config
-        case KafkaConfig.PMemPathProp => // ignore
+        case KafkaConfig.FirstTierPathProp => // ignore
         case KafkaConfig.PMemLogPoolRatioProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
-        case KafkaConfig.PMemSizeProp => // ignore
+        case KafkaConfig.FirstTierSizeProp => // ignore
         case KafkaConfig.LogChannelTypeProp => // ignore
         case KafkaConfig.MigrateThreadsProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
         case KafkaConfig.MigrateThresholdProp => assertPropertyInvalid(baseProperties, name, "not_a_number")
-        case KafkaConfig.HddPathProp => // ignore
+        case KafkaConfig.SecondTierPathProp => // ignore
+        case KafkaConfig.StorageTiersProp => // ignore
         // Remote Log Manager Configs
         case RemoteLogManagerConfig.REMOTE_LOG_STORAGE_SYSTEM_ENABLE_PROP => assertPropertyInvalid(baseProperties, name, "not_a_boolean")
         case RemoteLogManagerConfig.REMOTE_STORAGE_MANAGER_CLASS_NAME_PROP => // ignore string

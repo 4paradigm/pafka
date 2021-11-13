@@ -97,7 +97,7 @@ public class PMemMigrator {
             if (!migrateSuccess) {
                 log.info(this.chStr + ": migrate failed");
                 synchronized (statslLock) {
-                    if (this.mode.higherThan(MixChannel.Mode.HDD)) {
+                    if (this.mode == MixChannel.getDefaultMode()) {
                         usedG += size;
                     } else {
                         usedG -= size;
@@ -161,7 +161,7 @@ public class PMemMigrator {
         public void run() {
             // wait for the existing channels initialization phase to complete
             try {
-                Thread.sleep(10000);
+                Thread.sleep(5000);
             } catch (InterruptedException e) {
                 log.error("Sleep interrupt", e);
             }
@@ -176,7 +176,7 @@ public class PMemMigrator {
                     used = usedG;
                     usedStart = usedG;
                     usedTotal = usedTotalG;
-                    clonedChannels = (ArrayList) tmpChannels.clone();
+                    clonedChannels = (ArrayList<MixChannel>) tmpChannels.clone();
                     tmpChannels.clear();
                 }
 
@@ -188,7 +188,7 @@ public class PMemMigrator {
 
                     log.info("[Before Schedule] usedHigh: " + (used >> 20) + " MB, thresholdHigh: " + (((long) (capacity * threshold1)) >> 20) +
                             " MB, limitHigh: " + (capacity >> 20) + " MB, usedTotal: " + (usedTotal >> 20) + " MB");
-                    if (used >= capacity * threshold1) {
+                    if (used > capacity * threshold1) {
                         used = checkHighToLow(used);
                     } else {
                         used = checkLowToHigh(used);
@@ -202,7 +202,7 @@ public class PMemMigrator {
                 }
 
                 try {
-                    Thread.sleep(10000);
+                    Thread.sleep(5000);
                 } catch (InterruptedException e) {
                     log.error("Sleep interrupt", e);
                 }
@@ -241,6 +241,7 @@ public class PMemMigrator {
     }
 
     public void add(MixChannel channel) {
+        log.debug("Add " + channel);
         String ns = channel.getNamespace();
         long id = channel.getId();
         synchronized (statslLock) {
@@ -256,7 +257,7 @@ public class PMemMigrator {
                 ns2Id.put(channel.getNamespace(), id);
             }
 
-            if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
+            if (channel.getMode() == MixChannel.getDefaultMode()) {
                 usedG += channel.occupiedSize();
             }
             usedTotalG += channel.occupiedSize();
@@ -272,7 +273,7 @@ public class PMemMigrator {
         }
 
         synchronized (statslLock) {
-            if (channel.getMode().higherThan(MixChannel.Mode.HDD)) {
+            if (channel.getMode() == MixChannel.getDefaultMode()) {
                 usedG -= channel.occupiedSize();
             }
             usedTotalG -= channel.occupiedSize();
@@ -307,7 +308,7 @@ public class PMemMigrator {
             MixChannel.Mode m = ch.getMode();
 
             if (ch.getStatus() != MixChannel.Status.MIGRATION &&
-                    m.higherThan(MixChannel.Mode.HDD) && channelDone(ch)) {
+                    m == MixChannel.getDefaultMode() && channelDone(ch)) {
                 addTask(ch, MixChannel.Mode.HDD, true);
                 used -= ch.occupiedSize();
                 lastEvicted = ch;
