@@ -16,7 +16,7 @@
 FROM centos:7.3.1611
 
 LABEL maintainer="zhanghao@4paradigm.com"
-VOLUME ["/mnt/mem", "/mnt/hdd", "/pmem"]
+VOLUME ["/hdd", "/pmem", "/nvme", "/ssd"]
 
 # Set the timezone.
 ENV TZ="/usr/share/zoneinfo/Asia/Singapore"
@@ -37,7 +37,7 @@ RUN yum install -y libpmem librpmem libpmemblk libpmemlog libpmemobj libpmempool
 RUN pip3 install setuptools==46.4.0 && pip3 install jupyterlab tabulate
 
 # or clone directly
-# git clone --branch feat/notebook git@gitlab.4pd.io:hpc_sg/kafka.git /opt/pafka-dev
+# git clone https://github.com/4paradigm/pafka.git /opt/pafka-dev
 COPY ./ /opt/pafka-dev
 
 # set workdir
@@ -47,7 +47,6 @@ WORKDIR /opt/pafka-dev
 RUN ./gradlew jar
 
 # set workdir to notebook
-WORKDIR /opt/pafka-dev/notebook
+WORKDIR /opt/pafka-dev
 
-ENTRYPOINT ["/opt/pafka-dev/docker/entrypoint.sh"]
 CMD ["bash"]

@@ -36,8 +36,6 @@ The easiest way to try Pafka is to use the docker image: https://hub.docker.com/
 docker run -it 4pdopensource/pafka-dev bash
 ```
 
-where $YOUR_PMEM_PATH is the mount point of PMem (DAX file system) in the host system.
-
 If you use the docker image, you can skip the following `Compile` step.
 
 ### 3.2. Compile
@@ -99,11 +97,11 @@ Sample config in config/server.properties is as follows:
 
     # log file channel type; Options: "file", "pmem", "tiered".
     # if "file": use normal file as vanilla Kafka does. Following configs are not applicable.
-    log.channel.type=file
+    log.channel.type=tiered
     # the storage types for each layers (separated by ,)
-    storage.tiers.types=PMEM,HDD
+    storage.tiers.types=NVME,HDD
     # first-layer storage paths (separated by ,)
-    storage.tiers.first.paths=/pmem
+    storage.tiers.first.paths=/nvme
     # first-layer storage capacities in bytes (separated by ,); -1 means use all the space
     storage.tiers.first.sizes=-1
     # second-layer storage paths (separated by ,)
